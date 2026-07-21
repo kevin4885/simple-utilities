@@ -182,15 +182,19 @@ export function HistoryChart({
         const bh = Math.max(2, bottom - top)
         const isSelected = selectedYear === bar.year
 
-        // Color via CSS current-color class tokens applied via inline style
-        // We use CSS custom properties so light/dark themes work automatically
-        let fillClass = 'fill-primary'
+        // Color via CSS chart vars — defined in index.css, applied via inline style
+        // chart-1: dark navy (drought), chart-2: blue (normal),
+        // chart-3: gold (big water), chart-4: orange (forecast)
+        let chartVar = 'var(--chart-2)'
         let fillOpacity = 0.8
-        if (bar.isDrought) {
-          fillClass = 'fill-muted-foreground'
+        if (bar.isForecast) {
+          chartVar = 'var(--chart-4)'
+          fillOpacity = 0.25
+        } else if (bar.isDrought) {
+          chartVar = 'var(--chart-1)'
           fillOpacity = 0.35
         } else if (bar.isBig) {
-          fillClass = 'fill-secondary'
+          chartVar = 'var(--chart-3)'
           fillOpacity = 0.9
         }
 
@@ -233,7 +237,7 @@ export function HistoryChart({
                   width={bw}
                   height={bh}
                   rx={2}
-                  className={fillClass}
+                  style={{ fill: chartVar }}
                   fillOpacity={0.25}
                   stroke="currentColor"
                   strokeOpacity={0.7}
@@ -248,7 +252,7 @@ export function HistoryChart({
                 width={bw}
                 height={bh}
                 rx={2}
-                className={fillClass}
+                style={{ fill: chartVar }}
                 fillOpacity={fillOpacity}
               />
             )}

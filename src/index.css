@@ -1,80 +1,119 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@import "tw-animate-css";
 
-/* ── Light mode tokens ─────────────────────────────────────────── */
-:root {
-  --background: 0 0% 98%;
-  --foreground: 222 47% 11%;
+@custom-variant dark (&:is(.dark *));
 
-  --card: 0 0% 100%;
-  --card-foreground: 222 47% 11%;
-
-  --primary: 221 83% 53%; /* blue #2563eb */
-  --primary-foreground: 0 0% 100%;
-
-  --secondary: 25 95% 53%; /* orange #f97316 */
-  --secondary-foreground: 0 0% 100%;
-
-  --muted: 210 40% 94%;
-  --muted-foreground: 215 16% 47%;
-
-  --accent: 25 95% 53%;
-  --accent-foreground: 0 0% 100%;
-
-  --border: 214 32% 88%;
-  --input: 214 32% 88%;
-  --ring: 221 83% 53%;
-
-  --radius: 0.5rem;
-
-  --chart-1:                    #1d2e5c;
-  --chart-2:                    #3d61c2;
-  --chart-3:                    #ffc709;
-  --chart-4:                    #e86e25;
-  --chart-5:                    #50b2a0;
+@theme inline {
+  --color-background:          var(--background);
+  --color-foreground:          var(--foreground);
+  --color-card:                var(--card);
+  --color-card-foreground:     var(--card-foreground);
+  --color-popover:             var(--popover);
+  --color-popover-foreground:  var(--popover-foreground);
+  --color-primary:             var(--primary);
+  --color-primary-foreground:  var(--primary-foreground);
+  --color-secondary:           var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted:               var(--muted);
+  --color-muted-foreground:    var(--muted-foreground);
+  --color-accent:              var(--accent);
+  --color-accent-foreground:   var(--accent-foreground);
+  --color-destructive:         var(--destructive);
+  --color-border:              var(--border);
+  --color-input:               var(--input);
+  --color-ring:                var(--ring);
+  --color-chart-1:             var(--chart-1);
+  --color-chart-2:             var(--chart-2);
+  --color-chart-3:             var(--chart-3);
+  --color-chart-4:             var(--chart-4);
+  --color-chart-5:             var(--chart-5);
+  --radius-sm:  calc(var(--radius) - 4px);
+  --radius-md:  calc(var(--radius) - 2px);
+  --radius-lg:  var(--radius);
+  --radius-xl:  calc(var(--radius) + 4px);
 }
 
-/* ── Dark mode tokens ──────────────────────────────────────────── */
+/* ── Light mode ────────────────────────────────────────────────── */
+:root {
+  --background:             oklch(0.9848 0.0001 263.3);  /* ~#faf8f6 off-white  */
+  --foreground:             oklch(0.2064 0.0388 265.6);  /* dark navy            */
+
+  --card:                   oklch(1.0 0.0 0);
+  --card-foreground:        oklch(0.2064 0.0388 265.6);
+
+  --popover:                oklch(1.0 0.0 0);
+  --popover-foreground:     oklch(0.2064 0.0388 265.6);
+
+  --primary:                oklch(0.5449 0.2154 262.7);  /* blue  #2563eb        */
+  --primary-foreground:     oklch(1.0 0.0 0);
+
+  --secondary:              oklch(0.7066 0.1859 48.1);   /* orange #f97316       */
+  --secondary-foreground:   oklch(1.0 0.0 0);
+
+  --muted:                  oklch(0.9514 0.0106 248.1);
+  --muted-foreground:       oklch(0.5564 0.0399 256.8);
+
+  --accent:                 oklch(0.7066 0.1859 48.1);   /* orange, same as secondary */
+  --accent-foreground:      oklch(1.0 0.0 0);
+
+  --destructive:            oklch(0.6378 0.2373 25.4);
+
+  --border:                 oklch(0.9008 0.0178 255.1);
+  --input:                  oklch(0.9008 0.0178 255.1);
+  --ring:                   oklch(0.5449 0.2154 262.7);
+
+  --chart-1:                #1d2e5c;
+  --chart-2:                #3d61c2;
+  --chart-3:                #ffc709;
+  --chart-4:                #e86e25;
+  --chart-5:                #50b2a0;
+
+  --radius: 0.5rem;
+}
+
+/* ── Dark mode ─────────────────────────────────────────────────── */
 .dark {
-  --background: 221 52% 8%; /* dark navy ~#0a1428 */
-  --foreground: 36 27% 91%; /* warm off-white */
+  --background:             oklch(0.177 0.032 264.5);    /* dark navy ~#0a1428   */
+  --foreground:             oklch(0.9367 0.0112 78.2);   /* warm off-white       */
 
-  --card: 221 52% 13%;
-  --card-foreground: 36 27% 91%;
+  --card:                   oklch(0.225 0.0487 264.1);
+  --card-foreground:        oklch(0.9367 0.0112 78.2);
 
-  --primary: 43 68% 52%; /* gold #d4af37 */
-  --primary-foreground: 220 45% 10%;
+  --popover:                oklch(0.225 0.0487 264.1);
+  --popover-foreground:     oklch(0.9367 0.0112 78.2);
 
-  --secondary: 25 95% 53%; /* orange #f97316 */
-  --secondary-foreground: 0 0% 100%;
+  --primary:                oklch(0.7574 0.1398 85.8);   /* gold  #d4af37        */
+  --primary-foreground:     oklch(0.1997 0.0331 263.4);
 
-  --muted: 220 35% 18%;
-  --muted-foreground: 215 20% 65%;
+  --secondary:              oklch(0.7066 0.1859 48.1);   /* orange (same)        */
+  --secondary-foreground:   oklch(1.0 0.0 0);
 
-  --accent: 25 95% 53%;
-  --accent-foreground: 0 0% 100%;
+  --muted:                  oklch(0.2799 0.0426 263.5);
+  --muted-foreground:       oklch(0.71 0.0349 256.8);
 
-  --border: 221 52% 8%;
-  --input: 220 30% 22%;
-  --ring: 43 68% 52%;
+  --accent:                 oklch(0.7066 0.1859 48.1);
+  --accent-foreground:      oklch(1.0 0.0 0);
 
-  --color-chart-1: var(--chart-1);
-  --color-chart-2: var(--chart-2);
-  --color-chart-3: var(--chart-3);
-  --color-chart-4: var(--chart-4);
-  --color-chart-5: var(--chart-5);
+  --destructive:            oklch(0.6560 0.2410 354.3);
+
+  --border:                 oklch(0.177 0.032 264.5);    /* same as background   */
+  --input:                  oklch(0.3195 0.0432 263.7);
+  --ring:                   oklch(0.7574 0.1398 85.8);   /* gold                 */
+
+  --chart-1:                #1d2e5c;
+  --chart-2:                #3d61c2;
+  --chart-3:                #ffc709;
+  --chart-4:                #e86e25;
+  --chart-5:                #50b2a0;
 }
 
 /* ── Base resets ───────────────────────────────────────────────── */
-* {
-  border-color: transparent;
-}
-
-body {
-  background-color: hsl(var(--background));
-  color: hsl(var(--foreground));
-  font-feature-settings:
-    'rlig' 1,
-    'calt' 1;
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: 'rlig' 1, 'calt' 1;
+  }
 }

@@ -113,8 +113,8 @@ export default function PepperoniRollsPage() {
               min={1}
               max={96}
               step={1}
-              value={rolls}
-              onChange={setRolls}
+              value={[rolls]}
+              onValueChange={([v]) => setRolls(v)}
             />
             <div className="flex justify-between text-xs text-muted-foreground">
               <span>1</span>
@@ -134,8 +134,8 @@ export default function PepperoniRollsPage() {
               min={30}
               max={300}
               step={5}
-              value={ballWeight}
-              onChange={setBallWeight}
+              value={[ballWeight]}
+              onValueChange={([v]) => setBallWeight(v)}
             />
             <div className="flex justify-between text-xs text-muted-foreground">
               <span>30g</span>

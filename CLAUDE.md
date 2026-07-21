@@ -9,14 +9,14 @@ No backend, no database. State persists via localStorage. May call public APIs f
 
 | Concern             | Library                                      |
 | ------------------- | -------------------------------------------- |
-| Framework           | React 18 + TypeScript (strict)               |
-| Build / dev server  | Vite 6                                       |
-| Styling             | Tailwind CSS v3 (CSS variable tokens)        |
-| UI primitives       | Radix UI (only the components actually used) |
-| Routing             | React Router v6                              |
+| Framework           | React 19 + TypeScript (strict)               |
+| Build / dev server  | Vite 8                                       |
+| Styling             | Tailwind CSS v4 (CSS-first, `@import "tailwindcss"`, OKLCH tokens, no `tailwind.config.js`) |
+| UI components       | shadcn/ui (new-york style) on `radix-ui`     |
+| Routing             | React Router v7 (import from `react-router`) |
 | State / persistence | Zustand v5 with `persist` middleware         |
-| Validation          | Zod (localStorage reads, API responses)      |
-| Testing             | Vitest + Testing Library                     |
+| Validation          | Zod v4 (localStorage reads, API responses)   |
+| Testing             | Vitest v3 + Testing Library                  |
 | Lint / format       | ESLint 9 (flat config) + Prettier            |
 
 ## Commands
@@ -49,7 +49,7 @@ npm run format
 ```
 src/
   app/              # Shell: Layout, routing, Header, theme toggle
-    App.tsx         # BrowserRouter + Routes + Suspense wrapper
+    App.tsx         # BrowserRouter + Routes (react-router v7)
     Header.tsx      # Sticky header: title, category nav, theme toggle
     HomePage.tsx    # Tool grid grouped by category
     ToolPage.tsx    # Lazy-loads a tool by registry id
@@ -84,7 +84,7 @@ src/
         trip_stats.json  # Static: 10 historical trip years (exported from llano repo)
         mrc_params.json  # Static: MRC τ params + DAR constants (exported from llano repo)
   main.tsx
-  index.css         # Tailwind directives + CSS variable tokens
+  index.css         # Tailwind v4: @import + @theme inline + OKLCH tokens (no tailwind.config.js)
   test-setup.ts     # Vitest + Testing Library global setup
 ```
 
@@ -95,22 +95,37 @@ Theme is controlled via a CSS class on `<html>`:
 - No class / `.light` → light mode
 - `.dark` → dark mode
 
+Colors are defined as **OKLCH** CSS variables in `src/index.css` and exposed to Tailwind
+via `@theme inline`. Use semantic utilities everywhere — never hardcode raw colors.
+
 ### Token reference
 
 | Token                      | Light                           | Dark                            |
 | -------------------------- | ------------------------------- | ------------------------------- |
-| `--background`             | `0 0% 98%`                      | `220 45% 10%` (navy `~#0a1428`) |
-| `--foreground`             | `222 47% 11%`                   | `36 27% 91%` (warm off-white)   |
-| `--primary`                | `221 83% 53%` (blue `#2563eb`)  | `43 68% 52%` (gold `#d4af37`)   |
-| `--secondary` / `--accent` | `25 95% 53%` (orange `#f97316`) | same                            |
-| `--card`                   | `0 0% 100%`                     | `220 40% 14%`                   |
-| `--muted`                  | `210 40% 94%`                   | `220 35% 18%`                   |
-| `--border` / `--input`     | `214 32% 88%`                   | `220 30% 22%`                   |
-
-Tokens are consumed by Tailwind config (`tailwind.config.js`) so you can use
-`bg-primary`, `text-primary-foreground`, `border-border`, etc. anywhere.
+| `--background`             | `oklch(0.9848 0.0001 263.3)`    | `oklch(0.177 0.032 264.5)` (navy) |
+| `--foreground`             | `oklch(0.2064 0.0388 265.6)`    | `oklch(0.9367 0.0112 78.2)` (warm white) |
+| `--primary`                | `oklch(0.5449 0.2154 262.7)` (blue) | `oklch(0.7574 0.1398 85.8)` (gold) |
+| `--secondary` / `--accent` | `oklch(0.7066 0.1859 48.1)` (orange) | same                        |
+| `--card`                   | `oklch(1.0 0.0 0)`              | `oklch(0.225 0.0487 264.1)`     |
+| `--muted`                  | `oklch(0.9514 0.0106 248.1)`    | `oklch(0.2799 0.0426 263.5)`    |
+| `--border` / `--input`     | `oklch(0.9008 0.0178 255.1)`    | `oklch(0.177 / 0.3195 ...)`     |
 
 Theme choice is stored in localStorage under key `su:theme`.
+
+## shadcn/ui components
+
+Components live in `src/components/ui/` and are managed by the shadcn CLI (`components.json`).
+To add a new component: `npx shadcn@latest add <name>`
+
+Current components: `button`, `card`, `checkbox`, `collapsible`, `label`, `slider`, `toggle`, `toggle-group`
+
+All components import from the unified `radix-ui` package (not individual `@radix-ui/*` packages).
+
+### Slider API
+The shadcn Slider uses the Radix array API. Always pass arrays:
+```tsx
+<Slider value={[n]} onValueChange={([v]) => setState(v)} min={0} max={100} step={1} />
+```
 
 ## Tool registry pattern
 
@@ -134,6 +149,7 @@ All keys are prefixed `su:` to avoid collisions.
 ## Constraints
 
 - Frontend only — no server-side code, no build-time secrets
-- Keep Radix imports minimal — only add what a component actually uses
+- Add shadcn components via CLI (`npx shadcn@latest add <name>`), never hand-roll them
 - All localStorage reads must be validated with Zod before use
 - Every tool with non-trivial logic gets a `logic.test.ts`
+- Import from `react-router` (not `react-router-dom` — that is the legacy v6 package)

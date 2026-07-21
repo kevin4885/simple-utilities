@@ -1,5 +1,5 @@
 import { Suspense } from 'react'
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Routes, Route } from 'react-router'
 import { Header } from './Header'
 import { HomePage } from './HomePage'
 import { ToolPage } from './ToolPage'

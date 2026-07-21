@@ -19,8 +19,7 @@ export const UsgsValueSchema = z.object({
     .transform((s) => {
       const n = parseFloat(s)
       return isNaN(n) || n === USGS_SENTINEL ? null : n
-    })
-    .pipe(z.number().nullable()),
+    }),
   qualifiers: z.array(z.string()).optional(),
 })
 

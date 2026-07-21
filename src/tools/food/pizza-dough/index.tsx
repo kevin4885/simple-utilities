@@ -117,7 +117,7 @@ export default function PizzaDoughPage() {
               <Label htmlFor="size-slider">Pizza size</Label>
               <span className="font-semibold text-primary">{size}&quot;</span>
             </div>
-            <Slider id="size-slider" min={10} max={20} step={1} value={size} onChange={setSize} />
+            <Slider id="size-slider" min={10} max={20} step={1} value={[size]} onValueChange={([v]) => setSize(v)} />
             <div className="flex justify-between text-xs text-muted-foreground">
               <span>10&quot;</span>
               <span>20&quot;</span>
@@ -130,7 +130,7 @@ export default function PizzaDoughPage() {
               <Label htmlFor="qty-slider">Number of pizzas</Label>
               <span className="font-semibold text-primary">{qty}</span>
             </div>
-            <Slider id="qty-slider" min={1} max={10} step={1} value={qty} onChange={setQty} />
+            <Slider id="qty-slider" min={1} max={10} step={1} value={[qty]} onValueChange={([v]) => setQty(v)} />
             <div className="flex justify-between text-xs text-muted-foreground">
               <span>1</span>
               <span>10</span>
@@ -148,8 +148,8 @@ export default function PizzaDoughPage() {
               min={50}
               max={90}
               step={1}
-              value={hydration}
-              onChange={setHydration}
+              value={[hydration]}
+              onValueChange={([v]) => setHydration(v)}
             />
             <div className="flex justify-between text-xs text-muted-foreground">
               <span>50%</span>

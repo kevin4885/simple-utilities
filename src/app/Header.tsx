@@ -1,5 +1,5 @@
 import { Sun, Moon, Monitor, Wrench } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { Button } from '@/components/ui/button'
 import { useThemeStore } from '@/lib/theme'
 import { categories } from '@/tools/registry'

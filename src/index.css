@@ -27,14 +27,20 @@
   --ring: 221 83% 53%;
 
   --radius: 0.5rem;
+
+  --chart-1:                    #1d2e5c;
+  --chart-2:                    #3d61c2;
+  --chart-3:                    #ffc709;
+  --chart-4:                    #e86e25;
+  --chart-5:                    #50b2a0;
 }
 
 /* ── Dark mode tokens ──────────────────────────────────────────── */
 .dark {
-  --background: 220 45% 10%; /* dark navy ~#0a1428 */
+  --background: 221 52% 8%; /* dark navy ~#0a1428 */
   --foreground: 36 27% 91%; /* warm off-white */
 
-  --card: 220 40% 14%;
+  --card: 221 52% 13%;
   --card-foreground: 36 27% 91%;
 
   --primary: 43 68% 52%; /* gold #d4af37 */
@@ -49,14 +55,20 @@
   --accent: 25 95% 53%;
   --accent-foreground: 0 0% 100%;
 
-  --border: 220 30% 22%;
+  --border: 221 52% 8%;
   --input: 220 30% 22%;
   --ring: 43 68% 52%;
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
 }
 
 /* ── Base resets ───────────────────────────────────────────────── */
 * {
-  border-color: hsl(var(--border));
+  border-color: transparent;
 }
 
 body {

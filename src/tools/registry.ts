@@ -66,8 +66,21 @@ export const tools: ToolDef[] = [
     category: 'Rivers',
     title: 'Llano River @ Castell',
     description:
-      'River level and CFS readings for the Llano River at Castell, TX (USGS gauge 08150700).',
-    keywords: ['llano', 'river', 'texas', 'usgs', 'gauge', 'cfs', 'water level', 'castell'],
+      'Trip planner for Kevin\'s annual Castell fishing trip. Live USGS gauge data, Castell flow estimate (no gauge there — interpolated via DAR), per-day forecast, wading verdict, and 10-year history chart.',
+    keywords: [
+      'llano',
+      'river',
+      'texas',
+      'usgs',
+      'gauge',
+      'cfs',
+      'water level',
+      'castell',
+      'fishing',
+      'wading',
+      'forecast',
+      'recession',
+    ],
     component: lazy(() => import('./rivers/llano-castell/index')),
   },
 ]

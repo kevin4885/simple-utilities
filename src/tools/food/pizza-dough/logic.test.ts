@@ -1,10 +1,23 @@
 import { describe, it, expect } from 'vitest'
-import { calcDough, getProTip, THICKNESS_FACTORS, type DoughInputs } from './logic'
+import {
+  calcDough,
+  getProTip,
+  THICKNESS_FACTORS,
+  DEFAULT_HYDRATION_REGULAR,
+  DEFAULT_HYDRATION_GF,
+  type DoughInputs,
+} from './logic'
 
-// Default: 6x16" regular, no GF
-const defaults: DoughInputs = { size: 16, qty: 6, thickness: 'regular', glutenFree: false }
+// Default: 6x16" regular, no GF, 62% hydration
+const defaults: DoughInputs = {
+  size: 16,
+  qty: 6,
+  thickness: 'regular',
+  glutenFree: false,
+  hydration: DEFAULT_HYDRATION_REGULAR,
+}
 
-describe('calcDough — defaults (6×16" regular)', () => {
+describe('calcDough — defaults (6×16" regular, 62%)', () => {
   const result = calcDough(defaults)
 
   it('flour ≈ 1705g', () => {
@@ -17,12 +30,15 @@ describe('calcDough — defaults (6×16" regular)', () => {
     expect(result.water).toBeLessThanOrEqual(1060)
   })
 
-  it('ball weight ≈ 425g', () => {
-    expect(result.ballWeight).toBeGreaterThanOrEqual(420)
-    expect(result.ballWeight).toBeLessThanOrEqual(430)
+  it('ball weight = total dough mass / qty (≈484g at 62%)', () => {
+    // With the new formula: ballWeight = round((flour+water+yeast+salt+sugar+oil)/qty)
+    // At 6×16" regular, 62%: total ≈2902g → 484g per ball
+    expect(result.ballWeight).toBeGreaterThanOrEqual(480)
+    expect(result.ballWeight).toBeLessThanOrEqual(490)
   })
 
-  it('hydration = 0.62', () => {
+  it('hydration = DEFAULT_HYDRATION_REGULAR (0.62)', () => {
+    expect(result.hydration).toBe(DEFAULT_HYDRATION_REGULAR)
     expect(result.hydration).toBe(0.62)
   })
 
@@ -43,11 +59,56 @@ describe('calcDough — defaults (6×16" regular)', () => {
   })
 })
 
+describe('calcDough — hydration input', () => {
+  it('water = round(flour * hydration)', () => {
+    const r = calcDough(defaults)
+    expect(r.water).toBe(Math.round(r.flour * defaults.hydration))
+  })
+
+  it('higher hydration → more water', () => {
+    const r62 = calcDough({ ...defaults, hydration: 0.62 })
+    const r75 = calcDough({ ...defaults, hydration: 0.75 })
+    expect(r75.water).toBeGreaterThan(r62.water)
+  })
+
+  it('higher hydration → heavier ball weight', () => {
+    const r62 = calcDough({ ...defaults, hydration: 0.62 })
+    const r75 = calcDough({ ...defaults, hydration: 0.75 })
+    expect(r75.ballWeight).toBeGreaterThan(r62.ballWeight)
+  })
+
+  it('ball weight at 70% hydration ≈507g', () => {
+    const r = calcDough({ ...defaults, hydration: 0.7 })
+    expect(r.ballWeight).toBeGreaterThanOrEqual(503)
+    expect(r.ballWeight).toBeLessThanOrEqual(511)
+  })
+
+  it('hydration is echoed back in result', () => {
+    const r = calcDough({ ...defaults, hydration: 0.75 })
+    expect(r.hydration).toBe(0.75)
+  })
+
+  it('flour is unchanged by hydration', () => {
+    const r62 = calcDough({ ...defaults, hydration: 0.62 })
+    const r80 = calcDough({ ...defaults, hydration: 0.80 })
+    expect(r62.flour).toBe(r80.flour)
+  })
+
+  it('DEFAULT_HYDRATION_REGULAR is 0.62', () => {
+    expect(DEFAULT_HYDRATION_REGULAR).toBe(0.62)
+  })
+
+  it('DEFAULT_HYDRATION_GF is 0.80', () => {
+    expect(DEFAULT_HYDRATION_GF).toBe(0.8)
+  })
+})
+
 describe('calcDough — gluten free', () => {
-  const gf: DoughInputs = { ...defaults, glutenFree: true }
+  const gf: DoughInputs = { ...defaults, glutenFree: true, hydration: DEFAULT_HYDRATION_GF }
   const result = calcDough(gf)
 
-  it('hydration = 0.80', () => {
+  it('GF default hydration = 0.80', () => {
+    expect(result.hydration).toBe(DEFAULT_HYDRATION_GF)
     expect(result.hydration).toBe(0.8)
   })
 
@@ -115,8 +176,8 @@ describe('calcDough — quantity scaling', () => {
     expect(r12.flour / r6.flour).toBeCloseTo(2, 1)
   })
 
-  it('1 pizza ball weight same as 6 pizza ball weight', () => {
-    // ball weight = total dough / qty, so each ball should be same regardless of qty
+  it('1 pizza ball weight ≈ 6 pizza ball weight (same hydration)', () => {
+    // ball weight = total dough / qty; each ball is the same regardless of qty
     const r1 = calcDough({ ...defaults, qty: 1 })
     const r6 = calcDough(defaults)
     expect(r1.ballWeight).toBeCloseTo(r6.ballWeight, -1) // within ~5g
@@ -125,7 +186,7 @@ describe('calcDough — quantity scaling', () => {
 
 describe('getProTip', () => {
   it('returns GF tip first when GF enabled', () => {
-    const tip = getProTip({ ...defaults, glutenFree: true, size: 18 })
+    const tip = getProTip({ ...defaults, glutenFree: true, hydration: DEFAULT_HYDRATION_GF, size: 18 })
     expect(tip).toMatch(/GF dough/i)
   })
 

@@ -6,11 +6,17 @@ export const THICKNESS_FACTORS: Record<ThicknessName, number> = {
   thick: 2.75,
 }
 
+/** Default hydration fraction for regular dough (classic NY style). */
+export const DEFAULT_HYDRATION_REGULAR = 0.62
+/** Default hydration fraction for gluten-free dough. */
+export const DEFAULT_HYDRATION_GF = 0.8
+
 export interface DoughInputs {
   size: number // inches, 10–20
   qty: number // number of pizzas, 1–10
   thickness: ThicknessName
   glutenFree: boolean
+  hydration: number // fraction, e.g. 0.62; range 0.50–0.90
 }
 
 export interface DoughResult {
@@ -20,22 +26,17 @@ export interface DoughResult {
   salt: number // grams (rounded)
   sugar: number // grams (rounded)
   oil: number // grams (rounded)
-  ballWeight: number // grams per ball (rounded)
-  hydration: number // fraction (e.g. 0.62)
+  ballWeight: number // grams per ball (rounded) — total dough mass / qty
+  hydration: number // fraction (echoes inputs.hydration, e.g. 0.62)
 }
 
 // Constants derived from doughguy.co
 // BASE_FLOUR_REGULAR is the scaled flour used for ingredient amounts (~1705g at defaults)
 const BASE_FLOUR_REGULAR = 1509.797685 * (480 / 425)
-// BASE_FLOUR_BALL_REGULAR is the unscaled baseline used for ball weight, so that
-//   ballWeight = round(1509.797685 * doughFactor / 6) = round(2550/6) = 425
-const BASE_FLOUR_BALL_REGULAR = 1509.797685
 const BASE_FLOUR_GF = 333 * 6
-// doughFactor represents total dough weight per gram of (unscaled) base flour
-const DOUGH_FACTOR = 2550 / 1509.797685
 
 export function calcDough(inputs: DoughInputs): DoughResult {
-  const { size, qty, thickness, glutenFree } = inputs
+  const { size, qty, thickness, glutenFree, hydration } = inputs
   const thicknessFactor = THICKNESS_FACTORS[thickness]
   const scaleFactor = Math.pow(size / 16, 2) * (qty / 6) * (thicknessFactor / 2.11)
 
@@ -43,21 +44,16 @@ export function calcDough(inputs: DoughInputs): DoughResult {
   const baseFlour = glutenFree ? BASE_FLOUR_GF : BASE_FLOUR_REGULAR
   const flour = baseFlour * scaleFactor
 
-  const hydration = glutenFree ? 0.8 : 0.62
   const water = Math.round(flour * hydration)
   const yeast = flour * 0.004
   const salt = Math.round(flour * 0.025)
   const sugar = Math.round(flour * 0.02)
   const oil = Math.round(flour * 0.033)
 
-  // Ball weight uses the same DOUGH_FACTOR (2550 / BASE_FLOUR_BALL_REGULAR).
-  // For regular dough: this gives exactly 425g/ball at defaults, matching doughguy.co.
-  // For GF dough: we apply the same factor to keep the displayed ball weight proportional
-  // to flour amount (and consistent with the stat cards). Note the GF ingredient sum per
-  // ball will be slightly higher due to 80% hydration; the displayed weight reflects the
-  // doughguy.co convention for reference, not a scale-verified figure.
-  const ballBaseFlour = glutenFree ? BASE_FLOUR_GF : BASE_FLOUR_BALL_REGULAR
-  const ballWeight = Math.round((ballBaseFlour * scaleFactor * DOUGH_FACTOR) / qty)
+  // Ball weight = total actual dough mass divided into balls.
+  // Summing all ingredients (unrounded flour + rounded others) gives the
+  // physically correct weight that varies with hydration.
+  const ballWeight = Math.round((flour + water + yeast + salt + sugar + oil) / qty)
 
   return {
     flour: Math.round(flour),

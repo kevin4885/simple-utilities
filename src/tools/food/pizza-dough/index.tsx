@@ -25,15 +25,28 @@ const THICKNESS_LABELS: Record<ThicknessName, string> = {
 }
 
 export default function PizzaDoughPage() {
-  const { size, qty, thickness, glutenFree, setSize, setQty, setThickness, setGlutenFree } =
-    usePizzaDoughStore()
+  const {
+    size,
+    qty,
+    thickness,
+    glutenFree,
+    hydration,
+    setSize,
+    setQty,
+    setThickness,
+    setGlutenFree,
+    setHydration,
+  } = usePizzaDoughStore()
 
   const [instructionsOpen, setInstructionsOpen] = useState(false)
   const [copied, setCopied] = useState(false)
   const [copyError, setCopyError] = useState(false)
 
-  const result = calcDough({ size, qty, thickness, glutenFree })
-  const tip = getProTip({ size, qty, thickness, glutenFree })
+  // Store hydration as integer percentage (50–90); logic expects a fraction
+  const hydrationFraction = hydration / 100
+
+  const result = calcDough({ size, qty, thickness, glutenFree, hydration: hydrationFraction })
+  const tip = getProTip({ size, qty, thickness, glutenFree, hydration: hydrationFraction })
   const steps = glutenFree ? GF_STEPS : REGULAR_STEPS
   const flourLabel = glutenFree ? 'GF flour (Caputo GF recommended)' : 'Bread flour, 12–14% protein'
 
@@ -58,7 +71,7 @@ export default function PizzaDoughPage() {
 
   function buildRecipeText() {
     const lines = [
-      `Pizza Dough — ${qty}x ${size}" ${THICKNESS_LABELS[thickness]}${glutenFree ? ' (GF)' : ''}`,
+      `Pizza Dough — ${qty}x ${size}" ${THICKNESS_LABELS[thickness]}${glutenFree ? ' (GF)' : ''} · ${hydration}% hydration`,
       '',
       'INGREDIENTS',
       ...ingredients.map((i) => `  ${i.name}: ${i.amount} (${i.pct})`),
@@ -122,6 +135,32 @@ export default function PizzaDoughPage() {
               <span>1</span>
               <span>10</span>
             </div>
+          </div>
+
+          {/* Hydration */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="hydration-slider">Hydration</Label>
+              <span className="font-semibold text-primary">{hydration}%</span>
+            </div>
+            <Slider
+              id="hydration-slider"
+              min={50}
+              max={90}
+              step={1}
+              value={hydration}
+              onChange={setHydration}
+            />
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>50%</span>
+              <span>70%</span>
+              <span>90%</span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {glutenFree
+                ? '80% = GF standard · higher values increase open crumb'
+                : '62% = classic NY · 70%+ = airy, harder to handle'}
+            </p>
           </div>
 
           {/* Thickness */}

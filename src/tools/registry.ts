@@ -11,6 +11,28 @@ export interface ToolDef {
 
 export const tools: ToolDef[] = [
   {
+    id: 'color-converter',
+    category: 'Colors',
+    title: 'Color Converter',
+    description:
+      'Convert any color between HEX, RGB, RGBA, HSL, HSB, CMYK, and more. Includes live sliders, shade/tint palette, and one-click copy for every format.',
+    keywords: [
+      'color',
+      'hex',
+      'rgb',
+      'hsl',
+      'hsb',
+      'hsv',
+      'cmyk',
+      'converter',
+      'palette',
+      'picker',
+      'css',
+      'tailwind',
+    ],
+    component: lazy(() => import('./colors/color-converter/index')),
+  },
+  {
     id: 'pizza-dough',
     category: 'Food',
     title: 'Pizza Dough Calculator',
@@ -18,6 +40,26 @@ export const tools: ToolDef[] = [
       'Calculate exact ingredient amounts for homemade pizza dough. Supports thin, regular, and thick crust; gluten-free option included.',
     keywords: ['pizza', 'dough', 'recipe', 'flour', 'baking', 'food', 'ingredients'],
     component: lazy(() => import('./food/pizza-dough/index')),
+  },
+  {
+    id: 'pepperoni-rolls',
+    category: 'Food',
+    title: 'Pepperoni Rolls Calculator',
+    description:
+      "Calculate exact ingredient amounts for homemade pepperoni roll dough using baker's percentages. Bakes at 475°F for 12 minutes; brush with garlic butter after.",
+    keywords: [
+      'pepperoni',
+      'rolls',
+      'bread',
+      'dough',
+      'recipe',
+      'flour',
+      'baking',
+      'food',
+      'ingredients',
+      'garlic butter',
+    ],
+    component: lazy(() => import('./food/pepperoni-rolls/index')),
   },
   {
     id: 'llano-castell',

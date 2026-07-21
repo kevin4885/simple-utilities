@@ -1,0 +1,124 @@
+{
+  "mason": {
+    "site": "08150700",
+    "tau": {
+      "slow": 304.99,
+      "medium": 335.991,
+      "fast": 39.422
+    },
+    "tau_summer": {
+      "slow": 209.958,
+      "medium": 264.807,
+      "fast": 36.081
+    },
+    "floor_cfs": 15.0,
+    "calibrated_bands": {
+      "1": [
+        0.897,
+        1.114
+      ],
+      "2": [
+        0.864,
+        1.212
+      ],
+      "3": [
+        0.858,
+        1.323
+      ],
+      "5": [
+        0.87,
+        1.568
+      ],
+      "7": [
+        0.952,
+        1.919
+      ]
+    }
+  },
+  "llano": {
+    "site": "08151500",
+    "tau": {
+      "slow": 202.183,
+      "medium": 210.651,
+      "fast": 44.451
+    },
+    "tau_summer": {
+      "slow": 162.33,
+      "medium": 165.735,
+      "fast": 44.35
+    },
+    "floor_cfs": 25.0,
+    "calibrated_bands": {
+      "1": [
+        0.708,
+        1.178
+      ],
+      "2": [
+        0.662,
+        1.341
+      ],
+      "3": [
+        0.623,
+        1.499
+      ],
+      "5": [
+        0.582,
+        1.892
+      ],
+      "7": [
+        0.531,
+        2.325
+      ]
+    }
+  },
+  "dar": {
+    "mason_area_sqmi": 3243.0,
+    "llano_area_sqmi": 4197.0,
+    "castell_area_sqmi": 3500.0,
+    "reach_fraction": 0.269392,
+    "lag_base_h": 15.26,
+    "lag_scale_cfs": 4600.0,
+    "lag_pow": 0.342,
+    "lateral_uncertainty_frac": 0.2
+  },
+  "wading_thresholds": [
+    {
+      "lo": 0,
+      "hi": 50,
+      "label": "walk anywhere",
+      "brief": "Walk anywhere \u2014 barely a current."
+    },
+    {
+      "lo": 50,
+      "hi": 150,
+      "label": "easy wading",
+      "brief": "EASY WADING everywhere."
+    },
+    {
+      "lo": 150,
+      "hi": 400,
+      "label": "comfortable wading",
+      "brief": "COMFORTABLE WADING \u2014 mind the channels."
+    },
+    {
+      "lo": 400,
+      "hi": 800,
+      "label": "wadeable \u2014 pick your spots",
+      "brief": "EDGES & SHELVES OK. Channels: thigh-deep."
+    },
+    {
+      "lo": 800,
+      "hi": 1500,
+      "label": "edges and pools only",
+      "brief": "EDGES ONLY \u2014 knee-deep max. Channels: NO GO."
+    },
+    {
+      "lo": 1500,
+      "hi": 999999,
+      "label": "not a wading trip",
+      "brief": "NOT A WADING TRIP. Bank & pool edges only."
+    }
+  ],
+  "safety_line": "Safety: above-knees + pulling current = back up; upstream rain = get out.",
+  "exported_at": "2026-07-21T20:57:51.540982+00:00"
+}

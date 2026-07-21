@@ -67,9 +67,22 @@ src/
         logic.ts       # Pure dough math functions
         logic.test.ts  # Vitest unit tests
         store.ts       # Zustand persist store (key: su:pizza-dough)
+      pepperoni-rolls/
+        index.tsx      # Pepperoni Rolls Calculator UI
+        logic.ts       # Pure dough math functions
+        logic.test.ts  # Vitest unit tests
+        store.ts       # Zustand persist store (key: su:pepperoni-rolls)
     rivers/
       llano-castell/
-        index.tsx      # Stub page (Coming soon)
+        index.tsx      # Llano @ Castell trip tool (live USGS + DAR forecast + history chart)
+        logic.ts       # Pure functions: trip window, DAR interpolation, MRC, wading
+        logic.test.ts  # 88 Vitest unit tests (incl. cross-check acceptance tests)
+        schemas.ts     # Zod schemas for USGS IV API response + localStorage cache
+        store.ts       # Zustand persist store (key: su:llano-castell)
+        useGaugeData.ts # React hook: USGS fetch + 15-min cache + stale detection
+        HistoryChart.tsx # Hand-rolled SVG log-scale bar chart (11 years + forecast)
+        trip_stats.json  # Static: 10 historical trip years (exported from llano repo)
+        mrc_params.json  # Static: MRC τ params + DAR constants (exported from llano repo)
   main.tsx
   index.css         # Tailwind directives + CSS variable tokens
   test-setup.ts     # Vitest + Testing Library global setup
@@ -115,6 +128,8 @@ All keys are prefixed `su:` to avoid collisions.
 
 - `su:theme` — theme preference
 - `su:pizza-dough` — Pizza Dough Calculator inputs
+- `su:pepperoni-rolls` — Pepperoni Rolls Calculator inputs
+- `su:llano-castell` — Llano @ Castell: cached USGS gauge readings (P7D) + fetch timestamp
 
 ## Constraints
 

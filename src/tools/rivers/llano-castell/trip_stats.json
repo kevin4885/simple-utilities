@@ -1,0 +1,125 @@
+{
+  "historical": [
+    {
+      "year": 2016,
+      "thu": "2016-07-28",
+      "fri": "2016-07-29",
+      "sat": "2016-07-30",
+      "min_cfs": 83.6,
+      "max_cfs": 94.8,
+      "avg_cfs": 88.3,
+      "q50_cfs": 88.3,
+      "note": null,
+      "drought": false
+    },
+    {
+      "year": 2017,
+      "thu": "2017-07-27",
+      "fri": "2017-07-28",
+      "sat": "2017-07-29",
+      "min_cfs": 64.6,
+      "max_cfs": 83.9,
+      "avg_cfs": 74.9,
+      "q50_cfs": 74.9,
+      "note": null,
+      "drought": false
+    },
+    {
+      "year": 2018,
+      "thu": "2018-07-26",
+      "fri": "2018-07-27",
+      "sat": "2018-07-28",
+      "min_cfs": 7.3,
+      "max_cfs": 9.9,
+      "avg_cfs": 8.3,
+      "q50_cfs": 8.3,
+      "note": "low flow / drought",
+      "drought": true
+    },
+    {
+      "year": 2019,
+      "thu": "2019-07-25",
+      "fri": "2019-07-26",
+      "sat": "2019-07-27",
+      "min_cfs": 83.3,
+      "max_cfs": 94.2,
+      "avg_cfs": 88.9,
+      "q50_cfs": 88.9,
+      "note": null,
+      "drought": false
+    },
+    {
+      "year": 2020,
+      "thu": "2020-07-23",
+      "fri": "2020-07-24",
+      "sat": "2020-07-25",
+      "min_cfs": 55.7,
+      "max_cfs": 103.9,
+      "avg_cfs": 71.8,
+      "q50_cfs": 71.8,
+      "note": null,
+      "drought": false
+    },
+    {
+      "year": 2021,
+      "thu": "2021-07-29",
+      "fri": "2021-07-30",
+      "sat": "2021-07-31",
+      "min_cfs": 39.2,
+      "max_cfs": 53.5,
+      "avg_cfs": 48.3,
+      "q50_cfs": 48.3,
+      "note": null,
+      "drought": false
+    },
+    {
+      "year": 2022,
+      "thu": "2022-07-28",
+      "fri": "2022-07-29",
+      "sat": "2022-07-30",
+      "min_cfs": 3.3,
+      "max_cfs": 7.7,
+      "avg_cfs": 5.9,
+      "q50_cfs": 5.9,
+      "note": "low flow / drought",
+      "drought": true
+    },
+    {
+      "year": 2023,
+      "thu": "2023-07-27",
+      "fri": "2023-07-28",
+      "sat": "2023-07-29",
+      "min_cfs": 5.5,
+      "max_cfs": 6.8,
+      "avg_cfs": 6.2,
+      "q50_cfs": 6.2,
+      "note": "low flow / drought",
+      "drought": true
+    },
+    {
+      "year": 2024,
+      "thu": "2024-07-25",
+      "fri": "2024-07-26",
+      "sat": "2024-07-27",
+      "min_cfs": 828.8,
+      "max_cfs": 4043.7,
+      "avg_cfs": 1678.2,
+      "q50_cfs": 1678.2,
+      "note": null,
+      "drought": false
+    },
+    {
+      "year": 2025,
+      "thu": "2025-07-24",
+      "fri": "2025-07-25",
+      "sat": "2025-07-26",
+      "min_cfs": 352.6,
+      "max_cfs": 449.2,
+      "avg_cfs": 398.3,
+      "q50_cfs": 398.3,
+      "note": null,
+      "drought": false
+    }
+  ],
+  "exported_at": "2026-07-21T20:57:51.540377+00:00"
+}

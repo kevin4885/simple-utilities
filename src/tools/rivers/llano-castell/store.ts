@@ -21,6 +21,8 @@ const DEFAULT_CACHE: CachedState = {
   fetchedAtMs: 0,
   mason: [],
   llano: [],
+  masonFt: [],
+  llanoFt: [],
 }
 
 export const useLlanoCastellStore = create<LlanoCastellState>()(
@@ -45,6 +47,8 @@ export const useLlanoCastellStore = create<LlanoCastellState>()(
         fetchedAtMs: state.fetchedAtMs,
         mason: state.mason,
         llano: state.llano,
+        masonFt: state.masonFt,
+        llanoFt: state.llanoFt,
       }),
     },
   ),

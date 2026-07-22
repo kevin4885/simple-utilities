@@ -11,9 +11,13 @@
  *   - Median reference line: dashed, labeled.
  *   - Keyboard-accessible: bars have role="button" + tabIndex + onKeyDown.
  *   - Tap/click → calls onSelectYear prop with the year.
+ *
+ * When masonRatingCurve is provided, a second ft-delta chart is rendered below
+ * the CFS chart. Y-axis is linear, centered at 0 = July long-term median ft at
+ * Mason (derived from JULY_MEDIAN_MASON_CFS via the same rating curve).
  */
-import type { HistoricalYear } from './logic'
-import { fmtCfs } from './logic'
+import type { HistoricalYear, RatingCurve } from './logic'
+import { fmtCfs, fmtDeltaFt, applyRatingCurve, JULY_MEDIAN_MASON_CFS } from './logic'
 
 interface BarDatum {
   year: number
@@ -30,6 +34,8 @@ interface HistoryChartProps {
   forecastYear: number
   selectedYear: number | null
   onSelectYear: (year: number | null) => void
+  /** When provided, renders a second ft-delta chart below the CFS chart. */
+  masonRatingCurve?: RatingCurve | null
 }
 
 const LOG_CLAMP_MIN = 4 // avoid log(0) — use 4 cfs as minimum for log scale
@@ -44,6 +50,7 @@ export function HistoryChart({
   forecastYear,
   selectedYear,
   onSelectYear,
+  masonRatingCurve,
 }: HistoryChartProps) {
   // Build bar data
   const histBars: BarDatum[] = historicalYears.map((y) => ({
@@ -104,6 +111,7 @@ export function HistoryChart({
   const medianY = yPos(medianCfs)
 
   return (
+    <div className="space-y-4">
     <svg
       viewBox={`0 0 ${W} ${H}`}
       className="w-full"
@@ -293,5 +301,187 @@ export function HistoryChart({
         )
       })}
     </svg>
+
+    {/* ── Ft-delta chart ─────────────────────────────────────── */}
+    {masonRatingCurve && (() => {
+      // Baseline: July long-term median CFS → ft via the live rating curve
+      const baselineFt = applyRatingCurve(masonRatingCurve, JULY_MEDIAN_MASON_CFS) ?? 0
+
+      // Compute ft delta for every bar
+      const ftBars = bars.map((bar) => {
+        const ft = applyRatingCurve(masonRatingCurve, Math.max(bar.cfs, 1)) ?? 0
+        return { ...bar, delta: ft - baselineFt }
+      })
+
+      // Y-axis: symmetric around 0, padded to the max abs delta
+      const maxAbsDelta = Math.max(...ftBars.map((b) => Math.abs(b.delta)), 0.5)
+      const yPad = maxAbsDelta * 0.25
+      const yMax = maxAbsDelta + yPad
+      const yMin = -yMax
+
+      const FH = 200
+      const FpadT = 20
+      const FpadB = 48
+      const FchartH = FH - FpadT - FpadB
+
+      function ftYPos(delta: number): number {
+        const normalized = (delta - yMax) / (yMin - yMax) // 0 at top, 1 at bottom
+        return FpadT + normalized * FchartH
+      }
+      const zeroY = ftYPos(0)
+
+      // Y-axis tick marks: symmetric, round numbers
+      const rawStep = maxAbsDelta / 3
+      const mag = Math.pow(10, Math.floor(Math.log10(rawStep)))
+      const step = Math.ceil(rawStep / mag) * mag
+      const ftTicks: number[] = []
+      for (let v = 0; v <= maxAbsDelta + step * 0.1; v += step) {
+        ftTicks.push(v)
+        if (v !== 0) ftTicks.push(-v)
+      }
+
+      return (
+        <svg
+          viewBox={`0 0 ${W} ${FH}`}
+          className="w-full"
+          role="group"
+          aria-label="Ft above average July level — Mason gauge (log scale)"
+        >
+          {/* Y-axis gridlines + labels */}
+          {ftTicks.map((v) => {
+            const y = ftYPos(v)
+            if (y < FpadT - 2 || y > FH - FpadB + 2) return null
+            return (
+              <g key={v}>
+                <line
+                  x1={padL} x2={W - padR} y1={y} y2={y}
+                  stroke="currentColor" strokeOpacity={v === 0 ? 0 : 0.1} strokeWidth={1}
+                />
+                <text
+                  x={padL - 5} y={y + 4}
+                  textAnchor="end" fontSize={9}
+                  fill="currentColor" fillOpacity={0.55}
+                >
+                  {v >= 0 ? `+${v.toFixed(1)}` : v.toFixed(1)}
+                </text>
+              </g>
+            )
+          })}
+
+          {/* Zero reference line */}
+          <line
+            x1={padL} x2={W - padR} y1={zeroY} y2={zeroY}
+            stroke="currentColor" strokeOpacity={0.45} strokeWidth={1.5}
+            strokeDasharray="4 3"
+          />
+          <text
+            x={W - padR - 2} y={zeroY - 4}
+            textAnchor="end" fontSize={9}
+            fill="currentColor" fillOpacity={0.6}
+          >
+            avg July ({fmtDeltaFt(0)} = {(baselineFt).toFixed(1)} ft)
+          </text>
+
+          {/* Y-axis label */}
+          <text
+            x={10} y={FpadT + FchartH / 2}
+            textAnchor="middle" fontSize={9}
+            fill="currentColor" fillOpacity={0.6}
+            transform={`rotate(-90, 10, ${FpadT + FchartH / 2})`}
+          >
+            ft vs avg July
+          </text>
+
+          {/* Bars */}
+          {ftBars.map((bar, i) => {
+            const x = padL + i * barW + barPad
+            const bw = barW - barPad * 2
+            const isSelected = selectedYear === bar.year
+            const delta = bar.delta
+
+            const barTop = delta >= 0 ? ftYPos(delta) : zeroY
+            const barBot = delta >= 0 ? zeroY : ftYPos(delta)
+            const bh = Math.max(2, barBot - barTop)
+
+            let fillClass = 'fill-chart-2'
+            let fillOpacity = 0.85
+            if (bar.isDrought) { fillClass = 'fill-chart-1'; fillOpacity = 0.4 }
+            else if (bar.isBig) { fillClass = 'fill-chart-4'; fillOpacity = 0.9 }
+            // Bars below zero (drier than avg) get a subdued muted color
+            if (delta < 0 && !bar.isBig) { fillClass = 'fill-chart-1'; fillOpacity = 0.5 }
+
+            return (
+              <g
+                key={bar.year}
+                role="button" tabIndex={0}
+                aria-label={`${bar.year}: ${fmtDeltaFt(delta)} vs avg July${bar.isForecast ? ' (forecast)' : ''}`}
+                aria-pressed={isSelected}
+                onClick={() => onSelectYear(isSelected ? null : bar.year)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    onSelectYear(isSelected ? null : bar.year)
+                  }
+                }}
+                className="cursor-pointer outline-none"
+              >
+                {isSelected && (
+                  <rect
+                    x={x - 2} y={Math.min(barTop, zeroY) - 2}
+                    width={bw + 4} height={Math.abs(barBot - barTop) + 4}
+                    rx={3} fill="none"
+                    stroke="var(--chart-ring)" strokeOpacity={0.9} strokeWidth={2}
+                  />
+                )}
+
+                {bar.isForecast ? (
+                  <rect
+                    x={x} y={barTop} width={bw} height={bh} rx={2}
+                    className={fillClass} fillOpacity={0.25}
+                    stroke="currentColor" strokeOpacity={0.7}
+                    strokeWidth={1.5} strokeDasharray="4 2"
+                  />
+                ) : (
+                  <rect
+                    x={x} y={barTop} width={bw} height={bh} rx={2}
+                    className={fillClass} fillOpacity={fillOpacity}
+                  />
+                )}
+
+                {/* Value label */}
+                <text
+                  x={x + bw / 2}
+                  y={delta >= 0 ? barTop - 3 : barBot + 10}
+                  textAnchor="middle" fontSize={8}
+                  fill="currentColor" fillOpacity={0.75}
+                >
+                  {delta >= 0 ? `+${delta.toFixed(1)}` : delta.toFixed(1)}
+                </text>
+
+                {/* Year label */}
+                <text
+                  x={x + bw / 2} y={FH - FpadB + 14}
+                  textAnchor="middle" fontSize={9}
+                  fill="currentColor" fillOpacity={0.8}
+                >
+                  {String(bar.year).slice(2)}
+                </text>
+                {bar.isForecast && (
+                  <text
+                    x={x + bw / 2} y={FH - FpadB + 26}
+                    textAnchor="middle" fontSize={8}
+                    fill="currentColor" fillOpacity={0.6}
+                  >
+                    est
+                  </text>
+                )}
+              </g>
+            )
+          })}
+        </svg>
+      )
+    })()}
+
+    </div>
   )
 }

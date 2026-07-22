@@ -52,6 +52,19 @@ export interface DayForecast {
   q10: number
   q50: number
   q90: number
+  /** Mason gage height forecast (ft), derived from rating curve. Null if curve unavailable. */
+  ft10: number | null
+  ft50: number | null
+  ft90: number | null
+}
+
+/**
+ * Power-law rating curve: ft = a × cfs^b
+ * Fit via log-linear (OLS) regression on paired observations.
+ */
+export interface RatingCurve {
+  a: number
+  b: number
 }
 
 export interface WadingBucket {
@@ -554,6 +567,7 @@ export function forecastTripDays(
   },
   startUtcMs: number,
   tripDates: Date[],
+  masonRatingCurve: RatingCurve | null = null,
 ): DayForecast[] {
   const month = new Date(startUtcMs).getUTCMonth() // 0-indexed
 
@@ -609,12 +623,21 @@ export function forecastTripDays(
     const q10 = Math.max(0, castellQ50 * p10Factor)
     const q90 = castellQ50 * p90Factor
 
+    // Gage height forecast for Mason — apply rating curve to raw Mason CFS,
+    // then scale by the same band factors used for Castell CFS uncertainty.
+    const ft50 = applyRatingCurve(masonRatingCurve, masonAtHorizon)
+    const ft10 = ft50 !== null ? applyRatingCurve(masonRatingCurve, masonAtHorizon * p10Factor) : null
+    const ft90 = ft50 !== null ? applyRatingCurve(masonRatingCurve, masonAtHorizon * p90Factor) : null
+
     result.push({
       label: labels[i],
       date: tripDate,
       q10: Math.round(q10),
       q50: Math.round(castellQ50),
       q90: Math.round(q90),
+      ft10,
+      ft50,
+      ft90,
     })
   }
 
@@ -767,6 +790,85 @@ export function trendArrow(ratePctPerDay: number | null): string {
 
 export function fmtCfs(cfs: number): string {
   return cfs.toLocaleString('en-US', { maximumFractionDigits: 0 })
+}
+
+/** Format gage height in feet to 1 decimal place, e.g. "5.2" */
+export function fmtFt(ft: number): string {
+  return ft.toFixed(1)
+}
+
+/**
+ * Format a ft-delta with explicit sign, e.g. "+2.5 ft" or "−0.3 ft".
+ * Uses a proper minus sign (U+2212) for negative values.
+ */
+export function fmtDeltaFt(delta: number): string {
+  const sign = delta >= 0 ? '+' : '\u2212'
+  return `${sign}${Math.abs(delta).toFixed(1)} ft`
+}
+
+/**
+ * July long-term median CFS at Mason gauge (08150700).
+ * Derived from 52 years of approved monthly-mean data (1968–2025, USGS stat API).
+ * Used as the baseline for the ft-delta stacks-up chart.
+ */
+export const JULY_MEDIAN_MASON_CFS = 132
+
+// ---------------------------------------------------------------------------
+// Rating curve (CFS → ft)
+// ---------------------------------------------------------------------------
+
+/**
+ * Fit a power-law rating curve  ft = a × cfs^b  using log-linear OLS
+ * regression over paired CFS/ft observations.
+ *
+ * The two arrays are time-series that may have different lengths; we pair by
+ * taking readings from the *last* min(len_cfs, len_ft, maxPairs) entries of
+ * each, aligning by index from the end.  This keeps the regression anchored
+ * to the most recent flow conditions.
+ *
+ * Returns null if fewer than 5 valid pairs are available.
+ */
+export function fitRatingCurve(
+  cfsReadings: GaugeReading[],
+  ftReadings: GaugeReading[],
+  maxPairs = 200,
+): RatingCurve | null {
+  const n = Math.min(cfsReadings.length, ftReadings.length, maxPairs)
+  if (n < 5) return null
+
+  const cfsSlice = cfsReadings.slice(-n)
+  const ftSlice = ftReadings.slice(-n)
+
+  // log-linear OLS: ln(ft) = ln(a) + b * ln(cfs)
+  let sumX = 0, sumY = 0, sumXX = 0, sumXY = 0, count = 0
+  for (let i = 0; i < n; i++) {
+    const c = cfsSlice[i].value
+    const f = ftSlice[i].value
+    if (c <= 0 || f <= 0) continue
+    const x = Math.log(c)
+    const y = Math.log(f)
+    sumX += x
+    sumY += y
+    sumXX += x * x
+    sumXY += x * y
+    count++
+  }
+  if (count < 5) return null
+
+  const denom = count * sumXX - sumX * sumX
+  if (Math.abs(denom) < 1e-12) return null
+
+  const b = (count * sumXY - sumX * sumY) / denom
+  const lnA = (sumY - b * sumX) / count
+  const a = Math.exp(lnA)
+
+  return { a, b }
+}
+
+/** Apply a rating curve to convert CFS to feet. Returns null if curve is null. */
+export function applyRatingCurve(curve: RatingCurve | null, cfs: number): number | null {
+  if (!curve || cfs <= 0) return null
+  return curve.a * Math.pow(cfs, curve.b)
 }
 
 export function fmtRatePct(rate: number): string {

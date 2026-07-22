@@ -41,6 +41,10 @@ export const UsgsTimeSeriesSchema = z.object({
   variable: z
     .object({
       variableDescription: z.string().optional(),
+      // variableCode[0].value is e.g. "00060" (discharge) or "00065" (gage height)
+      variableCode: z
+        .array(z.object({ value: z.string() }))
+        .optional(),
     })
     .optional(),
   values: z.array(UsgsSiteValueSchema),
@@ -65,6 +69,9 @@ export const CachedStateSchema = z.object({
   fetchedAtMs: z.number(),
   mason: z.array(GaugeReadingSchema),
   llano: z.array(GaugeReadingSchema),
+  // Gage height (ft) — optional so old localStorage shapes still parse
+  masonFt: z.array(GaugeReadingSchema).optional().default([]),
+  llanoFt: z.array(GaugeReadingSchema).optional().default([]),
 })
 
 export type CachedState = z.infer<typeof CachedStateSchema>

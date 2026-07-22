@@ -31,10 +31,12 @@ import {
   stacksUp,
   trendArrow,
   fmtCfs,
+  fmtFt,
   fmtRatePct,
   fmtTimeAgo,
   fmtMonthDay,
   fmtTripDateRange,
+  fitRatingCurve,
 } from './logic'
 import type { DayForecast, HistoricalYear } from './logic'
 import { useGaugeData } from './useGaugeData'
@@ -132,6 +134,16 @@ function DayCard({ day, isToday, isObserved, isPushiest, isEasiest }: DayCardPro
       <div className="text-xs text-muted-foreground tabular-nums">
         range {fmtCfs(day.q10)}–{fmtCfs(day.q90)} cfs
       </div>
+
+      {/* Mason gage height forecast */}
+      {day.ft50 !== null && (
+        <div className="text-xs text-muted-foreground tabular-nums">
+          Mason ~{fmtFt(day.ft50)} ft
+          {day.ft10 !== null && day.ft90 !== null && (
+            <span> ({fmtFt(day.ft10)}–{fmtFt(day.ft90)} ft)</span>
+          )}
+        </div>
+      )}
     </Card>
   )
 }
@@ -154,11 +166,15 @@ export default function LlanoCastellPage() {
   const phase = tripPhase(year, now)
   const countdown = tripCountdown(year, now)
 
-  const { mason, llano, fetchedAtMs, isLoading, isStale, error, refresh } = useGaugeData()
+  const { mason, llano, masonFt, llanoFt, fetchedAtMs, isLoading, isStale, error, refresh } = useGaugeData()
 
   // Latest readings
   const latestMason = mason.length > 0 ? mason[mason.length - 1] : null
   const latestLlano = llano.length > 0 ? llano[llano.length - 1] : null
+
+  // Latest gage heights (ft) — may be empty if parameter unavailable
+  const latestMasonFt = masonFt.length > 0 ? masonFt[masonFt.length - 1] : null
+  const latestLlanoFt = llanoFt.length > 0 ? llanoFt[llanoFt.length - 1] : null
 
   // Castell estimate
   const castellEst =
@@ -168,6 +184,9 @@ export default function LlanoCastellPage() {
 
   // Recession rate (from Mason ~48h)
   const recRate = recessionRatePerDay(mason)
+
+  // Rating curve — fit from paired Mason CFS/ft observations
+  const masonRatingCurve = fitRatingCurve(mason, masonFt)
 
   // Forecast days
   const tripDates = [tw.thu, tw.fri, tw.sat]
@@ -179,6 +198,7 @@ export default function LlanoCastellPage() {
           masonMrc,
           fetchedAtMs || Date.now(),
           tripDates,
+          masonRatingCurve,
         )
       : []
 
@@ -308,6 +328,16 @@ export default function LlanoCastellPage() {
             )}
           </div>
 
+          {/* Mason gage height sub-label */}
+          {latestMasonFt && (
+            <p className="text-xs text-muted-foreground">
+              Mason at{' '}
+              <span className="tabular-nums font-medium text-foreground">
+                {fmtFt(latestMasonFt.value)} ft
+              </span>
+            </p>
+          )}
+
           {/* Updated + refresh */}
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             {fetchedAtMs > 0 && <span>updated {fmtTimeAgo(fetchedAtMs)}</span>}
@@ -420,6 +450,7 @@ export default function LlanoCastellPage() {
                 forecastYear={year}
                 selectedYear={selectedYear}
                 onSelectYear={setSelectedYear}
+                masonRatingCurve={masonRatingCurve}
               />
             ) : (
               <Skeleton className="h-48 w-full" />
@@ -485,7 +516,8 @@ export default function LlanoCastellPage() {
           <span className="font-medium text-foreground">Observed gauges:</span>
           {latestMason ? (
             <span className="tabular-nums text-muted-foreground">
-              Mason {fmtCfs(latestMason.value)} cfs{' '}
+              Mason {fmtCfs(latestMason.value)} cfs
+              {latestMasonFt && ` / ${fmtFt(latestMasonFt.value)} ft`}{' '}
               {recRate !== null ? trendArrow(recRate) : ''}
             </span>
           ) : (
@@ -495,6 +527,7 @@ export default function LlanoCastellPage() {
           {latestLlano ? (
             <span className="tabular-nums text-muted-foreground">
               Llano {fmtCfs(latestLlano.value)} cfs
+              {latestLlanoFt && ` / ${fmtFt(latestLlanoFt.value)} ft`}
             </span>
           ) : (
             <span className="text-muted-foreground">Llano –</span>

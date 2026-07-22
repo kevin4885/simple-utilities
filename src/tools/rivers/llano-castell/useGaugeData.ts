@@ -15,7 +15,7 @@ import { useLlanoCastellStore } from './store'
 
 const USGS_URL =
   `https://waterservices.usgs.gov/nwis/iv/?sites=${MASON_SITE},${LLANO_SITE}` +
-  `&parameterCd=00060&format=json&period=P7D`
+  `&parameterCd=00060,00065&format=json&period=P7D`
 
 const CACHE_TTL_MS = 15 * 60 * 1000 // 15 minutes
 const STALE_WARN_MS = 60 * 60 * 1000 // warn if >1h old
@@ -23,6 +23,10 @@ const STALE_WARN_MS = 60 * 60 * 1000 // warn if >1h old
 export interface UseGaugeDataResult {
   mason: GaugeReading[]
   llano: GaugeReading[]
+  /** Gage height in feet for Mason gauge (00065), empty if unavailable */
+  masonFt: GaugeReading[]
+  /** Gage height in feet for Llano gauge (00065), empty if unavailable */
+  llanoFt: GaugeReading[]
   fetchedAtMs: number
   isLoading: boolean
   /** Data is older than the TTL — could not refresh */
@@ -34,12 +38,16 @@ export interface UseGaugeDataResult {
 function parseTimeSeries(ts: unknown[]): Record<string, GaugeReading[]> {
   const result: Record<string, GaugeReading[]> = {}
   // The validated response has already been parsed by UsgsResponseSchema
-  // here we re-parse from the already-validated raw API shape
+  // here we re-parse from the already-validated raw API shape.
+  // Key format: "<siteCode>_<paramCode>" e.g. "08150700_00060"
   for (const series of ts as Array<{
     sourceInfo: { siteCode: Array<{ value: string }> }
+    variable?: { variableCode?: Array<{ value: string }> }
     values: Array<{ value: Array<{ dateTime: string; value: string | number | null }> }>
   }>) {
     const siteCode = series.sourceInfo?.siteCode?.[0]?.value ?? ''
+    const paramCode = series.variable?.variableCode?.[0]?.value ?? ''
+    const key = paramCode ? `${siteCode}_${paramCode}` : siteCode
     const readings: GaugeReading[] = []
     const values = series.values?.[0]?.value ?? []
     for (const v of values) {
@@ -48,13 +56,13 @@ function parseTimeSeries(ts: unknown[]): Record<string, GaugeReading[]> {
       if (isNaN(num) || num === USGS_SENTINEL || num < 0) continue
       readings.push({ dateTime: v.dateTime, value: num })
     }
-    result[siteCode] = readings
+    result[key] = readings
   }
   return result
 }
 
 export function useGaugeData(): UseGaugeDataResult {
-  const { fetchedAtMs, mason, llano, setCache } = useLlanoCastellStore()
+  const { fetchedAtMs, mason, llano, masonFt, llanoFt, setCache } = useLlanoCastellStore()
 
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -62,8 +70,10 @@ export function useGaugeData(): UseGaugeDataResult {
   const abortRef = useRef<AbortController | null>(null)
 
   const doFetch = useCallback(async () => {
-    // If cache is still fresh, skip
-    if (Date.now() - fetchedAtMs < CACHE_TTL_MS && mason.length > 0) return
+    // If cache is still fresh AND we already have gage-height data, skip.
+    // The masonFt.length check forces a refetch when the cached data predates
+    // the 00065 parameter being added (old cache has no feet data).
+    if (Date.now() - fetchedAtMs < CACHE_TTL_MS && mason.length > 0 && masonFt.length > 0) return
 
     if (abortRef.current) abortRef.current.abort()
     abortRef.current = new AbortController()
@@ -82,8 +92,10 @@ export function useGaugeData(): UseGaugeDataResult {
       }
 
       const bysite = parseTimeSeries(parsed.data.value.timeSeries)
-      const masonData = bysite[MASON_SITE] ?? []
-      const llanoData = bysite[LLANO_SITE] ?? []
+      const masonData   = bysite[`${MASON_SITE}_00060`] ?? bysite[MASON_SITE] ?? []
+      const llanoData   = bysite[`${LLANO_SITE}_00060`] ?? bysite[LLANO_SITE] ?? []
+      const masonFtData = bysite[`${MASON_SITE}_00065`] ?? []
+      const llanoFtData = bysite[`${LLANO_SITE}_00065`] ?? []
 
       if (masonData.length === 0 && llanoData.length === 0) {
         throw new Error('USGS returned no valid readings for either gauge')
@@ -93,6 +105,8 @@ export function useGaugeData(): UseGaugeDataResult {
         fetchedAtMs: Date.now(),
         mason: masonData,
         llano: llanoData,
+        masonFt: masonFtData,
+        llanoFt: llanoFtData,
       })
     } catch (e) {
       if (e instanceof Error && e.name === 'AbortError') return
@@ -100,7 +114,7 @@ export function useGaugeData(): UseGaugeDataResult {
     } finally {
       setIsLoading(false)
     }
-  }, [fetchedAtMs, mason.length, setCache])
+  }, [fetchedAtMs, mason.length, masonFt.length, setCache])
 
   // Fetch on mount and on TTL tick
   useEffect(() => {
@@ -117,6 +131,8 @@ export function useGaugeData(): UseGaugeDataResult {
   return {
     mason,
     llano,
+    masonFt,
+    llanoFt,
     fetchedAtMs,
     isLoading,
     isStale,

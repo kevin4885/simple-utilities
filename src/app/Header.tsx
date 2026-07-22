@@ -25,7 +25,7 @@ export function Header() {
   }
 
   return (
-    <header className="sticky top-0 z-50 border-b bg-card/80 backdrop-blur-sm">
+    <header className="sticky top-0 z-50 border-b bg-card/80 backdrop-blur-sm [padding-top:env(safe-area-inset-top)]">
       <div className="flex items-center gap-4 px-6 py-3">
         {/* Logo / title */}
         <Link

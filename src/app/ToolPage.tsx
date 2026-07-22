@@ -15,7 +15,7 @@ export function ToolPage() {
   return (
     <div>
       <div className="border-b bg-muted/30">
-        <div className="mx-auto max-w-2xl px-4 py-3">
+        <div className="px-6 py-3">
           <Link
             to="/"
             className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"

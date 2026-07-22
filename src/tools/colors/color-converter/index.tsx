@@ -218,13 +218,19 @@ export default function ColorConverterPage() {
         setDetectedFormat(res.format)
         setInputError(false)
         lastValidInput.current = raw
-        addToHistory(rgbToHexStr(res.color.r, res.color.g, res.color.b))
       } else {
         setInputError(true)
       }
     },
-    [setInputValue, addToHistory],
+    [setInputValue],
   )
+
+  // Commits the current valid color to history (Enter or blur on text input only)
+  const commitCurrentColor = useCallback(() => {
+    if (!inputError && inputValue.trim()) {
+      addToHistory(rgbToHexStr(color.r, color.g, color.b))
+    }
+  }, [inputError, inputValue, color, addToHistory])
 
   const updateColorFromSliders = useCallback(
     (newColor: RgbaColor) => {
@@ -339,6 +345,8 @@ export default function ColorConverterPage() {
                 type="text"
                 value={inputValue}
                 onChange={(e) => handleInputChange(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') commitCurrentColor() }}
+                onBlur={commitCurrentColor}
                 spellCheck={false}
                 placeholder="#0a1120 · hsl(221 52% 8%) · oklch(…) · navy"
                 className={cn(

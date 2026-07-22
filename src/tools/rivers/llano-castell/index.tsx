@@ -41,6 +41,7 @@ import {
 import type { DayForecast, HistoricalYear } from './logic'
 import { useGaugeData } from './useGaugeData'
 import { HistoryChart } from './HistoryChart'
+import { GaugeCharts } from './GaugeCharts'
 
 import tripStatsRaw from './trip_stats.json'
 import mrcRaw from './mrc_params.json'
@@ -509,7 +510,15 @@ export default function LlanoCastellPage() {
         </Card>
       </section>
 
-      {/* ── 5. FOOTER STRIP ──────────────────────────────────────── */}
+      {/* ── 5. GAUGE CHARTS ──────────────────────────────────────── */}
+      <GaugeCharts
+        mason={mason}
+        llano={llano}
+        masonFt={masonFt}
+        llanoFt={llanoFt}
+      />
+
+      {/* ── 6. FOOTER STRIP ──────────────────────────────────────── */}
       <footer className="space-y-3">
         {/* Gauge readings strip */}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-border bg-card px-4 py-3 text-sm">

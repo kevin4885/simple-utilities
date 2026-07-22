@@ -9,7 +9,7 @@
  *   5. Footer strip — gauge readings, "How this works" collapsible
  */
 import { useCallback, useEffect, useState } from 'react'
-import { RefreshCw, AlertTriangle, Waves } from 'lucide-react'
+import { RefreshCw, AlertTriangle, Waves, TrendingDown } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import {
@@ -302,14 +302,6 @@ export default function LlanoCastellPage() {
                   ~{fmtCfs(castellEst.q50)}
                 </span>
                 <span className="text-base text-muted-foreground">cfs est. Castell</span>
-                <span
-                  className={cn(
-                    'ml-1 text-sm font-medium',
-                    (recRate ?? 0) < -5 ? 'text-secondary' : 'text-muted-foreground',
-                  )}
-                >
-                  {trendArrow(recRate)}
-                </span>
               </div>
             ) : (
               <span className="text-sm text-muted-foreground">
@@ -320,11 +312,14 @@ export default function LlanoCastellPage() {
             {recRate !== null && (
               <span
                 className={cn(
-                  'text-sm tabular-nums',
-                  recRate < -5 ? 'text-secondary' : 'text-muted-foreground',
+                  'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium',
+                  recRate < -5
+                    ? 'bg-secondary/15 text-secondary'
+                    : 'bg-muted text-muted-foreground',
                 )}
               >
-                {trendArrow(recRate)} falling {fmtRatePct(recRate)}
+                <TrendingDown className="h-3 w-3" />
+                falling {fmtRatePct(recRate)}
               </span>
             )}
           </div>

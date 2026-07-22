@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { Copy, Check, AlertCircle } from 'lucide-react'
+import { Copy, Check, AlertCircle, Trash2 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
@@ -187,7 +187,7 @@ function CopyRow({ label, value, highlight = false, labelWidth = 'w-16' }: CopyR
 
 // ── Main component ─────────────────────────────────────────────────
 export default function ColorConverterPage() {
-  const { inputValue, sliderMode, setInputValue, setSliderMode } = useColorConverterStore()
+  const { inputValue, sliderMode, history, setInputValue, setSliderMode, addToHistory, clearHistory } = useColorConverterStore()
 
   const parseResult = parseColor(inputValue)
   const [color, setColor] = useState<RgbaColor>(parseResult?.color ?? DEFAULT_COLOR)
@@ -218,11 +218,12 @@ export default function ColorConverterPage() {
         setDetectedFormat(res.format)
         setInputError(false)
         lastValidInput.current = raw
+        addToHistory(rgbToHexStr(res.color.r, res.color.g, res.color.b))
       } else {
         setInputError(true)
       }
     },
-    [setInputValue],
+    [setInputValue, addToHistory],
   )
 
   const updateColorFromSliders = useCallback(
@@ -506,6 +507,67 @@ export default function ColorConverterPage() {
           <p className="mt-2 text-xs text-muted-foreground">Click a swatch to select it</p>
         </CardContent>
       </Card>
+
+      {/* ── History ───────────────────────────────────────────────── */}
+      {history.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">History</CardTitle>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-destructive"
+                onClick={clearHistory}
+                aria-label="Clear history"
+              >
+                <Trash2 className="h-3 w-3" />
+                Clear
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="flex flex-wrap gap-1.5">
+              {history.map((hex, i) => {
+                const isActive = hex === formats.hex
+                const c = parseColor(hex)?.color ?? DEFAULT_COLOR
+                return (
+                  <button
+                    key={`${hex}-${i}`}
+                    title={hex}
+                    onClick={() => handleInputChange(hex)}
+                    className={cn(
+                      'h-8 w-8 rounded-lg shrink-0 transition-all hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                      isActive
+                        ? 'ring-2 ring-primary ring-offset-2 ring-offset-card scale-105'
+                        : 'ring-1 ring-black/10 dark:ring-white/10',
+                    )}
+                    style={{ backgroundColor: hex }}
+                    aria-label={`Restore ${hex}`}
+                  >
+                    {isActive && (
+                      <span className="flex h-full w-full items-center justify-center">
+                        <span
+                          className="h-1.5 w-1.5 rounded-full"
+                          style={{
+                            backgroundColor:
+                              getContrastColor(c) === 'white'
+                                ? 'rgba(255,255,255,0.7)'
+                                : 'rgba(0,0,0,0.4)',
+                          }}
+                        />
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Last {history.length} color{history.length !== 1 ? 's' : ''} · click to restore
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* ── All Formats ───────────────────────────────────────────── */}
       <Card>

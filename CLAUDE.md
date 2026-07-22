@@ -7,17 +7,17 @@ No backend, no database. State persists via localStorage. May call public APIs f
 
 ## Tech stack
 
-| Concern             | Library                                      |
-| ------------------- | -------------------------------------------- |
-| Framework           | React 19 + TypeScript (strict)               |
-| Build / dev server  | Vite 8                                       |
+| Concern             | Library                                                                                     |
+| ------------------- | ------------------------------------------------------------------------------------------- |
+| Framework           | React 19 + TypeScript (strict)                                                              |
+| Build / dev server  | Vite 8                                                                                      |
 | Styling             | Tailwind CSS v4 (CSS-first, `@import "tailwindcss"`, OKLCH tokens, no `tailwind.config.js`) |
-| UI components       | shadcn/ui (new-york style) on `radix-ui`     |
-| Routing             | React Router v7 (import from `react-router`) |
-| State / persistence | Zustand v5 with `persist` middleware         |
-| Validation          | Zod v4 (localStorage reads, API responses)   |
-| Testing             | Vitest v3 + Testing Library                  |
-| Lint / format       | ESLint 9 (flat config) + Prettier            |
+| UI components       | shadcn/ui (new-york style) on `radix-ui`                                                    |
+| Routing             | React Router v7 (import from `react-router`)                                                |
+| State / persistence | Zustand v5 with `persist` middleware                                                        |
+| Validation          | Zod v4 (localStorage reads, API responses)                                                  |
+| Testing             | Vitest v3 + Testing Library                                                                 |
+| Lint / format       | ESLint 9 (flat config) + Prettier                                                           |
 
 ## Commands
 
@@ -100,15 +100,15 @@ via `@theme inline`. Use semantic utilities everywhere — never hardcode raw co
 
 ### Token reference
 
-| Token                      | Light                           | Dark                            |
-| -------------------------- | ------------------------------- | ------------------------------- |
-| `--background`             | `oklch(0.9848 0.0001 263.3)`    | `oklch(0.177 0.032 264.5)` (navy) |
-| `--foreground`             | `oklch(0.2064 0.0388 265.6)`    | `oklch(0.9367 0.0112 78.2)` (warm white) |
-| `--primary`                | `oklch(0.5449 0.2154 262.7)` (blue) | `oklch(0.7574 0.1398 85.8)` (gold) |
-| `--secondary` / `--accent` | `oklch(0.7066 0.1859 48.1)` (orange) | same                        |
-| `--card`                   | `oklch(1.0 0.0 0)`              | `oklch(0.225 0.0487 264.1)`     |
-| `--muted`                  | `oklch(0.9514 0.0106 248.1)`    | `oklch(0.2799 0.0426 263.5)`    |
-| `--border` / `--input`     | `oklch(0.9008 0.0178 255.1)`    | `oklch(0.177 / 0.3195 ...)`     |
+| Token                      | Light                                | Dark                                     |
+| -------------------------- | ------------------------------------ | ---------------------------------------- |
+| `--background`             | `oklch(0.9848 0.0001 263.3)`         | `oklch(0.177 0.032 264.5)` (navy)        |
+| `--foreground`             | `oklch(0.2064 0.0388 265.6)`         | `oklch(0.9367 0.0112 78.2)` (warm white) |
+| `--primary`                | `oklch(0.5449 0.2154 262.7)` (blue)  | `oklch(0.7574 0.1398 85.8)` (gold)       |
+| `--secondary` / `--accent` | `oklch(0.7066 0.1859 48.1)` (orange) | same                                     |
+| `--card`                   | `oklch(1.0 0.0 0)`                   | `oklch(0.225 0.0487 264.1)`              |
+| `--muted`                  | `oklch(0.9514 0.0106 248.1)`         | `oklch(0.2799 0.0426 263.5)`             |
+| `--border` / `--input`     | `oklch(0.9008 0.0178 255.1)`         | `oklch(0.177 / 0.3195 ...)`              |
 
 Theme choice is stored in localStorage under key `su:theme`.
 
@@ -122,7 +122,9 @@ Current components: `button`, `card`, `checkbox`, `collapsible`, `label`, `slide
 All components import from the unified `radix-ui` package (not individual `@radix-ui/*` packages).
 
 ### Slider API
+
 The shadcn Slider uses the Radix array API. Always pass arrays:
+
 ```tsx
 <Slider value={[n]} onValueChange={([v]) => setState(v)} min={0} max={100} step={1} />
 ```
@@ -153,3 +155,13 @@ All keys are prefixed `su:` to avoid collisions.
 - All localStorage reads must be validated with Zod before use
 - Every tool with non-trivial logic gets a `logic.test.ts`
 - Import from `react-router` (not `react-router-dom` — that is the legacy v6 package)
+
+## PWA
+
+The app is an installable PWA via `vite-plugin-pwa` (configured in `vite.config.ts`):
+
+- **Service worker** — Workbox `generateSW`, `registerType: 'autoUpdate'` (registered in `src/main.tsx` via `virtual:pwa-register`). All built assets are precached; SPA navigation falls back to `index.html`.
+- **Runtime caching** — USGS API (`waterservices.usgs.gov`) uses NetworkFirst (10 s timeout, 24 h expiry) so the Llano tool works offline with last-known data.
+- **Manifest** — generated from the config; theme/background color `#141c33` (dark navy, matches dark `--background`).
+- **Icons** — in `public/`: `favicon.svg` (source-of-truth design: gold→orange wrench on navy rounded square), `pwa-192x192.png`, `pwa-512x512.png`, `maskable-512x512.png` (glyph inside the 80% safe zone), `apple-touch-icon.png` (180px full-bleed; iOS applies its own corner mask).
+- The service worker is only generated in production builds (`npm run build`); dev mode is unaffected.

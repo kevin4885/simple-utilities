@@ -12,11 +12,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { RefreshCw, AlertTriangle, Waves, TrendingDown } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { cn } from '@/lib/utils'
 
 import {
@@ -65,15 +61,7 @@ const masonMrc = mrcRaw.mason as unknown as {
 // ---------------------------------------------------------------------------
 
 function Skeleton({ className }: { className?: string }) {
-  return (
-    <div
-      className={cn(
-        'animate-pulse rounded bg-muted',
-        className,
-      )}
-      aria-hidden="true"
-    />
-  )
+  return <div className={cn('animate-pulse rounded bg-muted', className)} aria-hidden="true" />
 }
 
 // ---------------------------------------------------------------------------
@@ -91,12 +79,7 @@ interface DayCardProps {
 function DayCard({ day, isToday, isObserved, isPushiest, isEasiest }: DayCardProps) {
   const dateStr = fmtMonthDay(day.date)
   return (
-    <Card
-      className={cn(
-        'flex flex-col gap-1 p-4',
-        isToday && 'ring-2 ring-primary',
-      )}
-    >
+    <Card className={cn('flex flex-col gap-1 p-4', isToday && 'ring-2 ring-primary')}>
       <div className="flex items-center justify-between">
         <span className="font-semibold text-sm text-foreground">
           {day.label}
@@ -141,7 +124,10 @@ function DayCard({ day, isToday, isObserved, isPushiest, isEasiest }: DayCardPro
         <div className="text-xs text-muted-foreground tabular-nums">
           Mason ~{fmtFt(day.ft50)} ft
           {day.ft10 !== null && day.ft90 !== null && (
-            <span> ({fmtFt(day.ft10)}–{fmtFt(day.ft90)} ft)</span>
+            <span>
+              {' '}
+              ({fmtFt(day.ft10)}–{fmtFt(day.ft90)} ft)
+            </span>
           )}
         </div>
       )}
@@ -167,7 +153,8 @@ export default function LlanoCastellPage() {
   const phase = tripPhase(year, now)
   const countdown = tripCountdown(year, now)
 
-  const { mason, llano, masonFt, llanoFt, fetchedAtMs, isLoading, isStale, error, refresh } = useGaugeData()
+  const { mason, llano, masonFt, llanoFt, fetchedAtMs, isLoading, isStale, error, refresh } =
+    useGaugeData()
 
   // Latest readings
   const latestMason = mason.length > 0 ? mason[mason.length - 1] : null
@@ -180,7 +167,12 @@ export default function LlanoCastellPage() {
   // Castell estimate
   const castellEst =
     latestMason && latestLlano
-      ? estimateCastellFromGauges(latestMason.value, latestLlano.value, mason, fetchedAtMs || Date.now())
+      ? estimateCastellFromGauges(
+          latestMason.value,
+          latestLlano.value,
+          mason,
+          fetchedAtMs || Date.now(),
+        )
       : null
 
   // Recession rate (from Mason ~48h)
@@ -211,11 +203,8 @@ export default function LlanoCastellPage() {
 
   // Stacks-up
   const forecastAvg =
-    forecastDays.length > 0
-      ? forecastDays.reduce((s, d) => s + d.q50, 0) / forecastDays.length
-      : 0
-  const stacksUpData =
-    forecastAvg > 0 ? stacksUp(historicalYears, forecastAvg, year) : null
+    forecastDays.length > 0 ? forecastDays.reduce((s, d) => s + d.q50, 0) / forecastDays.length : 0
+  const stacksUpData = forecastAvg > 0 ? stacksUp(historicalYears, forecastAvg, year) : null
 
   // Selected year for chart detail
   const [selectedYear, setSelectedYear] = useState<number | null>(null)
@@ -354,7 +343,10 @@ export default function LlanoCastellPage() {
 
       {/* ── 2. TRIP-DAY CARDS ────────────────────────────────────── */}
       <section aria-labelledby="trip-days-heading">
-        <h2 id="trip-days-heading" className="mb-2 text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+        <h2
+          id="trip-days-heading"
+          className="mb-2 text-sm font-semibold text-muted-foreground uppercase tracking-wide"
+        >
           Trip-day forecast
         </h2>
         {isLoading && forecastDays.length === 0 ? (
@@ -370,10 +362,8 @@ export default function LlanoCastellPage() {
               const dayUtc = day.date.toISOString().slice(0, 10)
               const isToday = phase === 'during' && dayUtc === todayUtc
               const isObserved = phase === 'after'
-              const isPushiest =
-                verdictData?.hardestDay === day.label
-              const isEasiest =
-                verdictData?.easiestDay === day.label
+              const isPushiest = verdictData?.hardestDay === day.label
+              const isEasiest = verdictData?.easiestDay === day.label
               return (
                 <DayCard
                   key={day.label}
@@ -403,16 +393,18 @@ export default function LlanoCastellPage() {
           </CardHeader>
           <CardContent className="space-y-2">
             {/* Primary verdict */}
-            <p className="font-semibold text-foreground">
-              {verdictData.brief}
-            </p>
+            <p className="font-semibold text-foreground">{verdictData.brief}</p>
 
             {/* Flow basis */}
             <p className="text-sm text-muted-foreground">
               Forecast upper band (conservative): ~{fmtCfs(verdictData.primaryCfs)} cfs
-              {verdictData.easiestDay && verdictData.hardestDay &&
+              {verdictData.easiestDay &&
+                verdictData.hardestDay &&
                 verdictData.easiestDay !== verdictData.hardestDay && (
-                  <> · {verdictData.hardestDay} pushiest, {verdictData.easiestDay} easiest</>
+                  <>
+                    {' '}
+                    · {verdictData.hardestDay} pushiest, {verdictData.easiestDay} easiest
+                  </>
                 )}
             </p>
 
@@ -434,9 +426,7 @@ export default function LlanoCastellPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             {/* Stacks-up summary line */}
-            {stacksUpData && (
-              <p className="text-sm text-muted-foreground">{stacksUpData.text}</p>
-            )}
+            {stacksUpData && <p className="text-sm text-muted-foreground">{stacksUpData.text}</p>}
 
             {/* Chart */}
             {forecastAvg > 0 ? (
@@ -459,9 +449,8 @@ export default function LlanoCastellPage() {
                   <div>
                     <span className="font-semibold">{year} (forecast)</span>
                     <span className="ml-2 text-muted-foreground">
-                      {fmtMonthDay(tw.thu)}–{fmtMonthDay(tw.sat)} ·{' '}
-                      q50 avg ~{fmtCfs(forecastAvg)} cfs ·{' '}
-                      range {fmtCfs(Math.min(...forecastDays.map((d) => d.q10)))}–
+                      {fmtMonthDay(tw.thu)}–{fmtMonthDay(tw.sat)} · q50 avg ~{fmtCfs(forecastAvg)}{' '}
+                      cfs · range {fmtCfs(Math.min(...forecastDays.map((d) => d.q10)))}–
                       {fmtCfs(Math.max(...forecastDays.map((d) => d.q90)))} cfs
                     </span>
                   </div>
@@ -469,9 +458,9 @@ export default function LlanoCastellPage() {
                   <div>
                     <span className="font-semibold">{selectedHistYear.year}</span>
                     <span className="ml-2 text-muted-foreground">
-                      {selectedHistYear.thu} – {selectedHistYear.sat} ·{' '}
-                      avg {fmtCfs(selectedHistYear.avg_cfs ?? 0)} cfs ·{' '}
-                      min {fmtCfs(selectedHistYear.min_cfs ?? 0)} · max{' '}
+                      {selectedHistYear.thu} – {selectedHistYear.sat} · avg{' '}
+                      {fmtCfs(selectedHistYear.avg_cfs ?? 0)} cfs · min{' '}
+                      {fmtCfs(selectedHistYear.min_cfs ?? 0)} · max{' '}
                       {fmtCfs(selectedHistYear.max_cfs ?? 0)} cfs
                       {selectedHistYear.note && (
                         <span className="ml-1 italic">({selectedHistYear.note})</span>
@@ -506,12 +495,7 @@ export default function LlanoCastellPage() {
       </section>
 
       {/* ── 5. GAUGE CHARTS ──────────────────────────────────────── */}
-      <GaugeCharts
-        mason={mason}
-        llano={llano}
-        masonFt={masonFt}
-        llanoFt={llanoFt}
-      />
+      <GaugeCharts mason={mason} llano={llano} masonFt={masonFt} llanoFt={llanoFt} />
 
       {/* ── 6. FOOTER STRIP ──────────────────────────────────────── */}
       <footer className="space-y-3">
@@ -554,36 +538,35 @@ export default function LlanoCastellPage() {
           <CollapsibleContent>
             <div className="mt-2 rounded-md border border-border bg-muted px-4 py-3 text-xs text-muted-foreground space-y-2">
               <p>
-                <strong className="text-foreground">No gauge at Castell.</strong> There is no
-                USGS gauge at Castell, TX. This tool <em>estimates</em> the flow there by
-                interpolating between two real gauges: Mason (08150700, upstream) and Llano
-                (08151500, downstream), using drainage-area weighting (DAR).
+                <strong className="text-foreground">No gauge at Castell.</strong> There is no USGS
+                gauge at Castell, TX. This tool <em>estimates</em> the flow there by interpolating
+                between two real gauges: Mason (08150700, upstream) and Llano (08151500,
+                downstream), using drainage-area weighting (DAR).
               </p>
               <p>
-                <strong className="text-foreground">Formula.</strong> Castell drainage area
-                ≈ 3,500 mi² sits between Mason (3,243 mi²) and Llano (4,197 mi²). The
-                fractional reach position f ≈ 0.269 gives:{' '}
+                <strong className="text-foreground">Formula.</strong> Castell drainage area ≈ 3,500
+                mi² sits between Mason (3,243 mi²) and Llano (4,197 mi²). The fractional reach
+                position f ≈ 0.269 gives:{' '}
                 <code className="rounded bg-card px-1 text-foreground">
                   Q_castell ≈ Q_mason + f × (Q_llano − Q_mason)
                 </code>
                 . The band is 20% spatial uncertainty on the lateral gain.
               </p>
               <p>
-                <strong className="text-foreground">Forecast.</strong> Future values extend
-                Mason flow via the Master Recession Curve (piecewise exponential, τ fast/medium/slow),
-                then route through the DAR formula. Calibrated uncertainty bands from
-                historical hindcast validation are applied.
+                <strong className="text-foreground">Forecast.</strong> Future values extend Mason
+                flow via the Master Recession Curve (piecewise exponential, τ fast/medium/slow),
+                then route through the DAR formula. Calibrated uncertainty bands from historical
+                hindcast validation are applied.
               </p>
               <p>
                 <strong className="text-foreground">These are estimates, not observations.</strong>{' '}
-                Treat Castell values as informed estimates with ±20–30% uncertainty.
-                Upstream rain events (not captured by this model) can significantly
-                change conditions.
+                Treat Castell values as informed estimates with ±20–30% uncertainty. Upstream rain
+                events (not captured by this model) can significantly change conditions.
               </p>
               <p className="text-[10px]">
                 Data: USGS IV API (CORS-enabled, no key). Gauge sites 08150700 and 08151500.
-                Auto-refreshed every 15 min. Logic ported from{' '}
-                <code>D:/kj-repos/llano</code> Python pipeline.
+                Auto-refreshed every 15 min. Logic ported from <code>D:/kj-repos/llano</code> Python
+                pipeline.
               </p>
             </div>
           </CollapsibleContent>

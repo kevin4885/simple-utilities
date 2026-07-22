@@ -245,7 +245,7 @@ export default function LlanoCastellPage() {
   // ---------------------------------------------------------------------------
 
   return (
-    <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
+    <div className="mx-auto max-w-7xl space-y-5 px-4 py-6">
       {/* ── Stale / error banner ─────────────────────────────────── */}
       {(error || isStale) && (
         <div

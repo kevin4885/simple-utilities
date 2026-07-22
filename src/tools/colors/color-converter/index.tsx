@@ -4,6 +4,16 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { cn } from '@/lib/utils'
 import {
   parseColor,
@@ -190,16 +200,28 @@ export default function ColorConverterPage() {
   const { inputValue, sliderMode, history, setInputValue, setSliderMode, addToHistory, clearHistory } = useColorConverterStore()
 
   const parseResult = parseColor(inputValue)
+
+  // committedColor = the last accepted color (what input field + history reflect)
+  const [committedColor, setCommittedColor] = useState<RgbaColor>(parseResult?.color ?? DEFAULT_COLOR)
+  // color = live preview (may differ from committedColor while user is exploring)
   const [color, setColor] = useState<RgbaColor>(parseResult?.color ?? DEFAULT_COLOR)
   const [detectedFormat, setDetectedFormat] = useState<InputFormat>(parseResult?.format ?? 'hex')
   const [inputError, setInputError] = useState(false)
   const lastValidInput = useRef(inputValue)
+
+  // Whether the user is in a pending/preview state (slider or shade tweak not yet accepted)
+  const isPending = rgbToHexStr(color.r, color.g, color.b) !== rgbToHexStr(committedColor.r, committedColor.g, committedColor.b)
+    || color.a !== committedColor.a
+
+  // Confirm dialog state — holds the raw value the user tried to navigate to
+  const [confirmPending, setConfirmPending] = useState<string | null>(null)
 
   // Sync on first load
   useEffect(() => {
     const res = parseColor(inputValue)
     if (res) {
       setColor(res.color)
+      setCommittedColor(res.color)
       setDetectedFormat(res.format)
       setInputError(false)
       lastValidInput.current = inputValue
@@ -208,46 +230,121 @@ export default function ColorConverterPage() {
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleInputChange = useCallback(
+  // Core commit — updates both color states, input, and history
+  const commitRaw = useCallback(
     (raw: string) => {
       setInputValue(raw)
       if (!raw.trim()) { setInputError(false); return }
       const res = parseColor(raw)
       if (res) {
         setColor(res.color)
+        setCommittedColor(res.color)
         setDetectedFormat(res.format)
         setInputError(false)
         lastValidInput.current = raw
+        addToHistory(rgbToHexStr(res.color.r, res.color.g, res.color.b))
       } else {
         setInputError(true)
       }
     },
-    [setInputValue],
+    [setInputValue, addToHistory],
   )
 
-  // Commits the current valid color to history (Enter or blur on text input only)
-  const commitCurrentColor = useCallback(() => {
-    if (!inputError && inputValue.trim()) {
-      addToHistory(rgbToHexStr(color.r, color.g, color.b))
-    }
-  }, [inputError, inputValue, color, addToHistory])
+  // Typing in the input: auto-commits if not pending; shows confirm dialog if pending
+  const handleInputChange = useCallback(
+    (raw: string) => {
+      if (isPending) {
+        // Store what they want to navigate to and open the dialog
+        setConfirmPending(raw)
+        return
+      }
+      commitRaw(raw)
+    },
+    [isPending, commitRaw],
+  )
 
+  // Input box typing — always flows through (no guard) so the field stays responsive
+  const handleInputTyping = useCallback(
+    (raw: string) => {
+      setInputValue(raw)
+      if (!raw.trim()) { setInputError(false); return }
+      const res = parseColor(raw)
+      if (res) {
+        setColor(res.color)
+        setCommittedColor(res.color)
+        setDetectedFormat(res.format)
+        setInputError(false)
+        lastValidInput.current = raw
+        addToHistory(rgbToHexStr(res.color.r, res.color.g, res.color.b))
+      } else {
+        setInputError(true)
+      }
+    },
+    [setInputValue, addToHistory],
+  )
+
+  // Sliders / shade-tint: preview only — does NOT commit or touch history
   const updateColorFromSliders = useCallback(
     (newColor: RgbaColor) => {
       setColor(newColor)
-      const hex = rgbToHexStr(newColor.r, newColor.g, newColor.b)
-      const val = newColor.a < 1
-        ? `rgb(${newColor.r} ${newColor.g} ${newColor.b} / ${newColor.a.toFixed(2)})`
-        : hex
-      setInputValue(val)
-      setDetectedFormat(newColor.a < 1 ? 'rgb-l4' : 'hex')
-      setInputError(false)
     },
-    [setInputValue],
+    [],
   )
 
-  // Derived
+  // Accept: promote preview color → committed, record to history, sync input
+  const handleAccept = useCallback(() => {
+    const hex = rgbToHexStr(color.r, color.g, color.b)
+    const val = color.a < 1
+      ? `rgb(${color.r} ${color.g} ${color.b} / ${color.a.toFixed(2)})`
+      : hex
+    setCommittedColor(color)
+    setInputValue(val)
+    setDetectedFormat(color.a < 1 ? 'rgb-l4' : 'hex')
+    addToHistory(hex)
+  }, [color, setInputValue, addToHistory])
+
+  // Discard: snap preview back to committed color
+  const handleDiscard = useCallback(() => {
+    setColor(committedColor)
+  }, [committedColor])
+
+  // Confirm dialog actions
+  const handleConfirmSave = useCallback(() => {
+    // Accept the pending preview first, then navigate
+    handleAccept()
+    if (confirmPending !== null) {
+      const target = confirmPending
+      setConfirmPending(null)
+      commitRaw(target)
+    }
+  }, [handleAccept, confirmPending, commitRaw])
+
+  const handleConfirmDiscard = useCallback(() => {
+    // Discard the preview, then navigate
+    setColor(committedColor)
+    if (confirmPending !== null) {
+      const target = confirmPending
+      setConfirmPending(null)
+      commitRaw(target)
+    }
+  }, [committedColor, confirmPending, commitRaw])
+
+  const handleConfirmCancel = useCallback(() => {
+    setConfirmPending(null)
+  }, [])
+
+  // Escape key discards while exploring
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape' && isPending && confirmPending === null) handleDiscard()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [isPending, confirmPending, handleDiscard])
+
+  // Derived — always off the live preview color
   const formats = generateFormats(color)
+  const committedFormats = generateFormats(committedColor)
   const palette = generatePalette(color)
   const contrastColor = getContrastColor(color)
   const [h, s, l] = rgbToHsl(color.r, color.g, color.b)
@@ -255,6 +352,9 @@ export default function ColorConverterPage() {
   const swatchBg = color.a < 1
     ? `rgba(${color.r}, ${color.g}, ${color.b}, ${color.a})`
     : rgbToHexStr(color.r, color.g, color.b)
+  const committedSwatchBg = committedColor.a < 1
+    ? `rgba(${committedColor.r}, ${committedColor.g}, ${committedColor.b}, ${committedColor.a})`
+    : rgbToHexStr(committedColor.r, committedColor.g, committedColor.b)
 
   // Copy all
   const [copiedAll, setCopiedAll] = useState(false)
@@ -314,7 +414,8 @@ export default function ColorConverterPage() {
   ]
 
   return (
-    <div className="mx-auto max-w-2xl space-y-5 px-4 py-8">
+    <>
+    <div className={cn('mx-auto max-w-2xl space-y-5 px-4 py-8', isPending && 'pb-24')}>
 
       {/* ── Header ────────────────────────────────────────────────── */}
       <div>
@@ -344,9 +445,7 @@ export default function ColorConverterPage() {
               <input
                 type="text"
                 value={inputValue}
-                onChange={(e) => handleInputChange(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') commitCurrentColor() }}
-                onBlur={commitCurrentColor}
+                onChange={(e) => handleInputTyping(e.target.value)}
                 spellCheck={false}
                 placeholder="#0a1120 · hsl(221 52% 8%) · oklch(…) · navy"
                 className={cn(
@@ -372,7 +471,7 @@ export default function ColorConverterPage() {
                   {FORMAT_LABELS[detectedFormat]}
                 </span>
                 <span className="text-xs text-muted-foreground truncate font-mono">
-                  {formats.hex}
+                  {committedFormats.hex}
                 </span>
               </>
             )}
@@ -405,6 +504,53 @@ export default function ColorConverterPage() {
           </div>
         </div>
       </Card>
+
+      {/* ── Accept / Discard — sticky bottom bar ─────────────────── */}
+      <div className="fixed bottom-0 left-0 right-0 z-50 overflow-hidden pointer-events-none">
+        <div
+          className={cn(
+            'pointer-events-auto transition-transform duration-200 ease-in-out',
+            isPending ? 'translate-y-0' : 'translate-y-full',
+          )}
+        >
+          <div className="border-t border-primary/30 bg-card/95 backdrop-blur-sm shadow-[0_-4px_24px_rgba(0,0,0,0.12)]">
+            <div className="mx-auto flex max-w-2xl items-center gap-3 px-4 py-3">
+              {/* Before → After swatches */}
+              <div className="flex items-center gap-2 shrink-0">
+                <div
+                  className="h-8 w-8 rounded-lg ring-1 ring-black/10 dark:ring-white/10 shrink-0"
+                  style={{ backgroundColor: committedSwatchBg }}
+                  title={`Original: ${committedFormats.hex}`}
+                />
+                <span className="text-muted-foreground text-sm select-none">→</span>
+                <div
+                  className="h-8 w-8 rounded-lg ring-2 ring-primary shrink-0"
+                  style={{ backgroundColor: swatchBg }}
+                  title={`New: ${formats.hex}`}
+                />
+              </div>
+              {/* Hex diff */}
+              <div className="flex-1 min-w-0 hidden sm:flex items-center gap-2 font-mono text-xs">
+                <span className="line-through text-muted-foreground/60 truncate">{committedFormats.hex}</span>
+                <span className="text-muted-foreground">→</span>
+                <span className="font-semibold text-foreground truncate">{formats.hex}</span>
+              </div>
+              {/* Hint */}
+              <span className="text-xs text-muted-foreground/50 hidden md:block shrink-0">Esc to discard</span>
+              {/* Actions */}
+              <div className="flex items-center gap-2 shrink-0 ml-auto sm:ml-0">
+                <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={handleDiscard}>
+                  Discard
+                </Button>
+                <Button size="sm" className="h-8 text-xs gap-1.5" onClick={handleAccept}>
+                  <Check className="h-3 w-3" />
+                  Accept
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* ── Sliders ───────────────────────────────────────────────── */}
       <Card>
@@ -485,18 +631,21 @@ export default function ColorConverterPage() {
           <CardTitle className="text-base">Shades &amp; Tints</CardTitle>
         </CardHeader>
         <CardContent className="pt-0">
-          <div className="flex gap-1.5 overflow-x-auto pb-1">
+          <div className="flex gap-1.5 overflow-x-auto py-2 px-0.5">
             {palette.map(({ hex, isBase }, i) => (
               <button
                 key={i}
                 title={hex}
-                onClick={() => handleInputChange(hex)}
+                onClick={() => {
+                  const res = parseColor(hex)
+                  if (res) setColor(res.color)
+                }}
                 className={cn(
                   'relative shrink-0 rounded-lg transition-all hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                   isBase ? 'h-12 w-12 ring-2 ring-primary ring-offset-2 ring-offset-card scale-105' : 'h-10 w-10',
                 )}
                 style={{ backgroundColor: hex }}
-                aria-label={`Select ${hex}`}
+                aria-label={`Preview ${hex}`}
               >
                 {isBase && (
                   <span className="absolute inset-0 flex items-center justify-center">
@@ -512,7 +661,7 @@ export default function ColorConverterPage() {
               </button>
             ))}
           </div>
-          <p className="mt-2 text-xs text-muted-foreground">Click a swatch to select it</p>
+          <p className="mt-2 text-xs text-muted-foreground">Click a swatch to preview · Accept to commit</p>
         </CardContent>
       </Card>
 
@@ -537,7 +686,7 @@ export default function ColorConverterPage() {
           <CardContent className="pt-0">
             <div className="flex flex-wrap gap-1.5">
               {history.map((hex, i) => {
-                const isActive = hex === formats.hex
+                const isActive = hex === committedFormats.hex
                 const c = parseColor(hex)?.color ?? DEFAULT_COLOR
                 return (
                   <button
@@ -658,6 +807,35 @@ export default function ColorConverterPage() {
       </Card>
 
     </div>
+
+    {/* ── Unsaved-changes confirm dialog ────────────────────────── */}
+    <AlertDialog open={confirmPending !== null} onOpenChange={(open: boolean) => { if (!open) handleConfirmCancel() }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Unsaved adjustment</AlertDialogTitle>
+          <AlertDialogDescription>
+            You have an unapplied color change{' '}
+            <span className="font-mono font-semibold text-foreground">{committedFormats.hex} → {formats.hex}</span>.
+            What would you like to do?
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="flex items-center gap-3 py-1">
+          <div className="h-10 w-10 rounded-lg ring-1 ring-black/10 dark:ring-white/10 shrink-0" style={{ backgroundColor: committedSwatchBg }} />
+          <span className="text-muted-foreground">→</span>
+          <div className="h-10 w-10 rounded-lg ring-2 ring-primary shrink-0" style={{ backgroundColor: swatchBg }} />
+        </div>
+        <AlertDialogFooter className="flex-col gap-2 sm:flex-row">
+          <AlertDialogCancel onClick={handleConfirmCancel}>Cancel</AlertDialogCancel>
+          <Button variant="ghost" onClick={handleConfirmDiscard}>
+            Discard &amp; continue
+          </Button>
+          <AlertDialogAction onClick={handleConfirmSave}>
+            Save &amp; continue
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   )
 }
 

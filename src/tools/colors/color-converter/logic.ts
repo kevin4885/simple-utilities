@@ -655,7 +655,94 @@ export function generatePalette(color: RgbaColor): Array<{ hex: string; isBase: 
   })
 }
 
-// ── Contrast ───────────────────────────────────────────────────────
+// ── Color Harmonies ────────────────────────────────────────────────
+
+export type HarmonyType =
+  | 'complementary'
+  | 'split-complementary'
+  | 'analogous'
+  | 'triadic'
+  | 'tetradic'
+  | 'double-split'
+  | 'monochromatic'
+
+export interface HarmonyColor {
+  hex: string
+  label: string
+  isBase: boolean
+}
+
+function shiftHue(h: number, s: number, l: number, degrees: number): string {
+  const [r, g, b] = hslToRgb((h + degrees + 360) % 360, s, l)
+  return rgbToHexStr(r, g, b)
+}
+
+export function generateHarmony(color: RgbaColor, type: HarmonyType): HarmonyColor[] {
+  const [h, s, l] = rgbToHsl(color.r, color.g, color.b)
+  const base = rgbToHexStr(color.r, color.g, color.b)
+
+  switch (type) {
+    case 'complementary':
+      return [
+        { hex: base,               label: 'Base',        isBase: true  },
+        { hex: shiftHue(h,s,l,180), label: 'Complement',  isBase: false },
+      ]
+
+    case 'split-complementary':
+      return [
+        { hex: base,                label: 'Base',    isBase: true  },
+        { hex: shiftHue(h,s,l,150), label: '+150°',   isBase: false },
+        { hex: shiftHue(h,s,l,210), label: '+210°',   isBase: false },
+      ]
+
+    case 'analogous':
+      return [
+        { hex: shiftHue(h,s,l,-60), label: '−60°',   isBase: false },
+        { hex: shiftHue(h,s,l,-30), label: '−30°',   isBase: false },
+        { hex: base,                label: 'Base',    isBase: true  },
+        { hex: shiftHue(h,s,l, 30), label: '+30°',   isBase: false },
+        { hex: shiftHue(h,s,l, 60), label: '+60°',   isBase: false },
+      ]
+
+    case 'triadic':
+      return [
+        { hex: base,                label: 'Base',    isBase: true  },
+        { hex: shiftHue(h,s,l,120), label: '+120°',  isBase: false },
+        { hex: shiftHue(h,s,l,240), label: '+240°',  isBase: false },
+      ]
+
+    case 'tetradic':
+      return [
+        { hex: base,                label: 'Base',    isBase: true  },
+        { hex: shiftHue(h,s,l, 90), label: '+90°',   isBase: false },
+        { hex: shiftHue(h,s,l,180), label: '+180°',  isBase: false },
+        { hex: shiftHue(h,s,l,270), label: '+270°',  isBase: false },
+      ]
+
+    case 'double-split':
+      return [
+        { hex: base,                label: 'Base',    isBase: true  },
+        { hex: shiftHue(h,s,l, 30), label: '+30°',   isBase: false },
+        { hex: shiftHue(h,s,l,150), label: '+150°',  isBase: false },
+        { hex: shiftHue(h,s,l,180), label: '+180°',  isBase: false },
+        { hex: shiftHue(h,s,l,210), label: '+210°',  isBase: false },
+        { hex: shiftHue(h,s,l,330), label: '+330°',  isBase: false },
+      ]
+
+    case 'monochromatic': {
+      const steps = [-30, -20, -10, 0, 10, 20, 30]
+      return steps.map((dl) => {
+        const newL = clamp(l + dl, 5, 95)
+        const [r, g, b] = hslToRgb(h, s, newL)
+        return {
+          hex: rgbToHexStr(r, g, b),
+          label: dl === 0 ? 'Base' : `L${dl > 0 ? '+' : ''}${dl}`,
+          isBase: dl === 0,
+        }
+      })
+    }
+  }
+}
 
 export function getContrastColor(color: RgbaColor): 'white' | 'black' {
   const toLinear = (c: number): number => {

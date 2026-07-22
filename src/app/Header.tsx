@@ -1,28 +1,18 @@
-import { Sun, Moon, Monitor, Wrench } from 'lucide-react'
+import { Sun, Moon, Wrench } from 'lucide-react'
 import { Link } from 'react-router'
 import { Button } from '@/components/ui/button'
 import { useThemeStore } from '@/lib/theme'
 import { categories } from '@/tools/registry'
 
-type ThemeOption = 'light' | 'dark' | 'system'
-
-const themeIcons: Record<ThemeOption, typeof Sun> = {
-  light: Sun,
-  dark: Moon,
-  system: Monitor,
-}
-
-const themeOrder: ThemeOption[] = ['system', 'light', 'dark']
-
 export function Header() {
   const { theme, setTheme } = useThemeStore()
-  function cycleTheme() {
-    const idx = themeOrder.indexOf(theme as ThemeOption)
-    const next = themeOrder[(idx + 1) % themeOrder.length]
-    setTheme(next)
+
+  function toggleTheme() {
+    setTheme(theme === 'light' ? 'dark' : 'light')
   }
 
-  const ThemeIcon = themeIcons[(theme as ThemeOption) ?? 'system']
+  const ThemeIcon = theme === 'dark' ? Moon : Sun
+  const nextThemeLabel = theme === 'dark' ? 'light' : 'dark'
 
   return (
     <header className="sticky top-0 z-50 border-b bg-card/80 backdrop-blur-sm">
@@ -65,9 +55,9 @@ export function Header() {
         <Button
           variant="ghost"
           size="icon"
-          onClick={cycleTheme}
-          title={`Theme: ${theme} (click to cycle)`}
-          aria-label={`Current theme: ${theme}. Click to cycle.`}
+          onClick={toggleTheme}
+          title={`Switch to ${nextThemeLabel} mode`}
+          aria-label={`Switch to ${nextThemeLabel} mode`}
         >
           <ThemeIcon className="h-4 w-4" />
         </Button>

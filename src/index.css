@@ -27,6 +27,7 @@
   --color-chart-3:             var(--chart-3);
   --color-chart-4:             var(--chart-4);
   --color-chart-5:             var(--chart-5);
+  --color-chart-ring:          var(--chart-ring);
   --radius-sm:  calc(var(--radius) - 4px);
   --radius-md:  calc(var(--radius) - 2px);
   --radius-lg:  var(--radius);
@@ -67,6 +68,7 @@
   --chart-3:                #ffc709;
   --chart-4:                #e86e25;
   --chart-5:                #50b2a0;
+  --chart-ring:             #e86e25;  /* orange — pops on light bg */
 
   --radius: 0.5rem;
 }
@@ -105,6 +107,7 @@
   --chart-3:                #ffc709;
   --chart-4:                #e86e25;
   --chart-5:                #50b2a0;
+  --chart-ring:             #ffc709;  /* yellow — pops on dark bg */
 }
 
 /* ── Base resets ───────────────────────────────────────────────── */

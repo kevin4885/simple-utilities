@@ -182,15 +182,14 @@ export function HistoryChart({
         const bh = Math.max(2, bottom - top)
         const isSelected = selectedYear === bar.year
 
-        // Color via CSS current-color class tokens applied via inline style
-        // We use CSS custom properties so light/dark themes work automatically
-        let fillClass = 'fill-primary'
-        let fillOpacity = 0.8
+        // Color via chart token classes so light/dark themes work automatically
+        let fillClass = 'fill-chart-2'  // normal bar  → medium blue
+        let fillOpacity = 0.85
         if (bar.isDrought) {
-          fillClass = 'fill-muted-foreground'
-          fillOpacity = 0.35
+          fillClass = 'fill-chart-1'    // drought bar → dark navy (de-emphasised)
+          fillOpacity = 0.4
         } else if (bar.isBig) {
-          fillClass = 'fill-secondary'
+          fillClass = 'fill-chart-4'    // big year    → orange
           fillOpacity = 0.9
         }
 
@@ -208,7 +207,7 @@ export function HistoryChart({
                 onSelectYear(isSelected ? null : bar.year)
               }
             }}
-            className="cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="cursor-pointer outline-none"
           >
             {/* Highlight ring when selected */}
             {isSelected && (
@@ -219,8 +218,8 @@ export function HistoryChart({
                 height={bh + 4}
                 rx={3}
                 fill="none"
-                stroke="currentColor"
-                strokeOpacity={0.7}
+                stroke="var(--chart-ring)"
+                strokeOpacity={0.9}
                 strokeWidth={2}
               />
             )}

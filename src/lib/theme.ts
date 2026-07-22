@@ -1,27 +1,25 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-type Theme = 'light' | 'dark' | 'system'
+type Theme = 'light' | 'dark'
 
 interface ThemeState {
   theme: Theme
   setTheme: (theme: Theme) => void
 }
 
+function getSystemTheme(): Theme {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
 function applyTheme(theme: Theme) {
-  const root = document.documentElement
-  if (theme === 'system') {
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
-    root.classList.toggle('dark', prefersDark)
-  } else {
-    root.classList.toggle('dark', theme === 'dark')
-  }
+  document.documentElement.classList.toggle('dark', theme === 'dark')
 }
 
 export const useThemeStore = create<ThemeState>()(
   persist(
     (set) => ({
-      theme: 'system' as Theme,
+      theme: getSystemTheme(),
       setTheme: (theme: Theme) => {
         set({ theme })
         applyTheme(theme)
@@ -32,6 +30,12 @@ export const useThemeStore = create<ThemeState>()(
 )
 
 export function initTheme() {
-  const stored = useThemeStore.getState().theme
-  applyTheme(stored)
+  const state = useThemeStore.getState()
+  // Migrate any old 'system' value that may be in localStorage
+  if ((state.theme as string) === 'system') {
+    const resolved = getSystemTheme()
+    state.setTheme(resolved)
+  } else {
+    applyTheme(state.theme)
+  }
 }

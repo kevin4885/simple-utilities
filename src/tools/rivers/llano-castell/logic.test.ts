@@ -36,7 +36,7 @@ import {
   WADING_THRESHOLDS,
   SAFETY_LINE,
 } from './logic'
-import type { GaugeReading, HistoricalYear } from './logic'
+import type { GaugeReading, HistoricalYear, DayForecast } from './logic'
 
 // MRC params (mirrored from mrc_params.json for pure-logic tests)
 const MASON_MRC = {
@@ -560,10 +560,10 @@ describe('wadingBucket', () => {
 })
 
 describe('wadingVerdict', () => {
-  const days = [
-    { label: 'Thu' as const, date: new Date(), q10: 809, q50: 930, q90: 1118 },
-    { label: 'Fri' as const, date: new Date(), q10: 730, q50: 850, q90: 1114 },
-    { label: 'Sat' as const, date: new Date(), q10: 670, q50: 776, q90: 1111 },
+  const days: DayForecast[] = [
+    { label: 'Thu', date: new Date(), q10: 809, q50: 930, q90: 1118, ft10: null, ft50: null, ft90: null },
+    { label: 'Fri', date: new Date(), q10: 730, q50: 850, q90: 1114, ft10: null, ft50: null, ft90: null },
+    { label: 'Sat', date: new Date(), q10: 670, q50: 776, q90: 1111, ft10: null, ft50: null, ft90: null },
   ]
 
   it('with forecast=true, uses max q90 (≥1118) → not a wading trip bucket', () => {

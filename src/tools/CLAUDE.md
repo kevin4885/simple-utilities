@@ -6,7 +6,7 @@ Follow these exact steps every time. Do not deviate.
 
 ## Step 1 — Create the tool folder
 
-Pick a category (e.g. `food`, `rivers`, `math`, `text`) and a kebab-case id.
+Pick a category (e.g. `colors`, `food`, `rivers`, `3d-printing`) and a kebab-case id.
 
 ```
 src/tools/<category>/<tool-id>/

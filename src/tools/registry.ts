@@ -62,6 +62,28 @@ export const tools: ToolDef[] = [
     component: lazy(() => import('./food/pepperoni-rolls/index')),
   },
   {
+    id: 'markdown-editor',
+    category: 'Writing',
+    title: 'Markdown Editor',
+    description:
+      'Distraction-free markdown editor for LLM prompts and docs. Live preview, per-document undo history, real-time token counts (GPT-4o exact; Claude/Gemini estimated), and multi-document management — all saved locally.',
+    keywords: [
+      'markdown',
+      'editor',
+      'llm',
+      'prompt',
+      'writing',
+      'tokens',
+      'preview',
+      'gpt',
+      'claude',
+      'gemini',
+      'notes',
+      'docs',
+    ],
+    component: lazy(() => import('./writing/markdown-editor/index')),
+  },
+  {
     id: 'llano-castell',
     category: 'Rivers',
     title: 'Llano River @ Castell',

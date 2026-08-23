@@ -18,7 +18,7 @@ No backend, no database. State persists via localStorage. May call public APIs f
 | Validation          | Zod v4 (localStorage reads, API responses)                                                  |
 | Testing             | Vitest v3 + Testing Library                                                                 |
 | Lint / format       | ESLint 9 (flat config) + Prettier                                                           |
-
+| Markdown editor     | `@uiw/react-codemirror` + `@codemirror/lang-markdown` (editor), `react-markdown` + `remark-gfm` (preview), `gpt-tokenizer` (token counting) |
 ## Commands
 
 ```powershell
@@ -61,6 +61,12 @@ src/
     ui/             # Shared UI components (button, card, slider, checkbox, etc.)
   tools/
     registry.ts     # THE source of truth — all tools declared here
+    colors/
+      color-converter/
+        index.tsx      # Color Converter UI (input, sliders, palette, harmonies, format table)
+        logic.ts       # Pure color math: parse, convert (RGB/HSL/HSV/HWB/OKLCH/CMYK), format, palette, harmonies
+        logic.test.ts  # Vitest unit tests
+        store.ts       # Zustand persist store (key: su:color-converter)
     food/
       pizza-dough/
         index.tsx      # Pizza Dough Calculator UI
@@ -83,6 +89,16 @@ src/
         HistoryChart.tsx # Hand-rolled SVG log-scale bar chart (11 years + forecast)
         trip_stats.json  # Static: 10 historical trip years (exported from llano repo)
         mrc_params.json  # Static: MRC τ params + DAR constants (exported from llano repo)
+    3d-printing/
+      gridfinity-baseplate/   # ⚠ WIP — not yet in registry.ts; no index.tsx or store.ts yet
+        logic.ts       # Pure geometry: splitting algorithm, plate/bowtie mesh builder, binary STL + 3MF writers
+        logic.test.ts  # Vitest unit tests (manifold checks, volume, STL byte layout, 3MF ZIP magic)
+    writing/
+      markdown-editor/
+        index.tsx      # Markdown Editor UI (split-pane desktop, tabbed mobile, Sheet sidebar)
+        logic.ts       # Pure functions: token counting (GPT exact, Claude/Gemini approx), word/char/line counts, doc title gen
+        logic.test.ts  # Vitest unit tests
+        store.ts       # Zustand persist store (key: su:markdown-editor) — multi-doc, active doc, model selection
   main.tsx
   index.css         # Tailwind v4: @import + @theme inline + OKLCH tokens (no tailwind.config.js)
   test-setup.ts     # Vitest + Testing Library global setup
@@ -117,7 +133,7 @@ Theme choice is stored in localStorage under key `su:theme`.
 Components live in `src/components/ui/` and are managed by the shadcn CLI (`components.json`).
 To add a new component: `npx shadcn@latest add <name>`
 
-Current components: `button`, `card`, `checkbox`, `collapsible`, `label`, `slider`, `toggle`, `toggle-group`
+Current components: `alert-dialog`, `button`, `card`, `checkbox`, `collapsible`, `label`, `separator`, `sheet`, `slider`, `tabs`, `toggle`, `toggle-group`
 
 All components import from the unified `radix-ui` package (not individual `@radix-ui/*` packages).
 
@@ -144,9 +160,13 @@ See `src/tools/CLAUDE.md` for step-by-step instructions on adding a new tool.
 All keys are prefixed `su:` to avoid collisions.
 
 - `su:theme` — theme preference
+- `su:color-converter` — Color Converter: last input value, slider mode (rgb/hsl/hsv), color history (up to 50 hex entries)
 - `su:pizza-dough` — Pizza Dough Calculator inputs
 - `su:pepperoni-rolls` — Pepperoni Rolls Calculator inputs
 - `su:llano-castell` — Llano @ Castell: cached USGS gauge readings (P7D) + fetch timestamp
+- `su:markdown-editor` — Markdown Editor: multi-doc list, active doc id, selected token model
+
+> `3d-printing/gridfinity-baseplate` has no store yet (WIP — no `index.tsx` or registry entry).
 
 ## Constraints
 

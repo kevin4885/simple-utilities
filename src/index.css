@@ -122,3 +122,41 @@
     font-feature-settings: 'rlig' 1, 'calt' 1;
   }
 }
+
+/* ── Native scrollbars — match shadcn ScrollArea appearance ────── */
+/* Mirrors: w-2.5 track, p-px padding, bg-border rounded-full thumb */
+/* Dark mode uses --muted-foreground instead of --border because     */
+/* this theme sets --border === --background in dark mode, which     */
+/* would make the thumb invisible.                                   */
+@layer base {
+  /* Firefox */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  .dark * {
+    scrollbar-color: var(--muted-foreground) transparent;
+  }
+
+  /* Webkit (Chrome, Safari, Edge) */
+  ::-webkit-scrollbar {
+    width:  10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--border);
+    border-radius:    9999px;
+    /* 1px inset gap — matches shadcn ScrollBar's p-px */
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  .dark ::-webkit-scrollbar-thumb {
+    background-color: var(--muted-foreground);
+  }
+}

@@ -156,14 +156,16 @@ the viewport is already accounted for by the shell. Use `h-full` to fill the all
 
 ### Scrollbar appearance
 
-Native scrollbars match the active colour scheme automatically because `src/index.css` sets:
+Scrollbars are globally styled in `src/index.css` to match the shadcn `ScrollArea` component —
+10px track, `border-radius: 9999px` rounded thumb, transparent track, 2px inset gap.
 
-```css
-:root        { color-scheme: light; }
-.dark        { color-scheme: dark;  }
-```
+Token mapping:
+- **Light:** thumb = `var(--border)`
+- **Dark:** thumb = `var(--muted-foreground)` — `var(--border)` equals `var(--background)` in dark
+  mode (intentional design choice), so it would be invisible.
 
-No per-component scrollbar styling is needed. Do not add custom `::-webkit-scrollbar` rules.
+Do not add per-component `::-webkit-scrollbar` overrides — the global rules cover everything
+including CodeMirror's scroller, preview panes, sidebars, and the ToolPage scroll wrapper.
 
 ## PWA
 

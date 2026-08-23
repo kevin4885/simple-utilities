@@ -19,12 +19,23 @@ import {
   FileText,
   Download,
   Pencil,
+  History,
+  RotateCcw,
+  Pin,
+  X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+  SheetClose,
+} from '@/components/ui/sheet'
 import { Separator } from '@/components/ui/separator'
 import {
   ResizablePanelGroup,
@@ -38,8 +49,14 @@ import {
   countWords,
   countChars,
   countLines,
+  formatVersionTime,
 } from './logic'
-import { useMarkdownEditorStore, type Doc, type Model } from './store'
+import { useMarkdownEditorStore, type Doc, type Model, type Version } from './store'
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+/** Inactivity threshold (ms) before an auto-version is captured. */
+const INACTIVITY_MS = 5 * 60 * 1000 // 5 minutes
 
 // ── Editor theme (local) ──────────────────────────────────────────────────────
 // Kept here (not in shared CodeEditor) because the markdown editor manages its
@@ -392,6 +409,204 @@ function InlineTitle({ title, onRename }: InlineTitleProps) {
   )
 }
 
+// ── VersionItem ───────────────────────────────────────────────────────────────
+
+interface VersionItemProps {
+  version: Version
+  onRestore: () => void
+  onPin: (label: string) => void
+  onDelete: () => void
+}
+
+function VersionItem({ version, onRestore, onPin, onDelete }: VersionItemProps) {
+  const [pinning, setPinning] = useState(false)
+  const [pinLabel, setPinLabel] = useState(version.label ?? '')
+  const inputRef = useRef<HTMLInputElement>(null)
+  const timeLabel = formatVersionTime(version.savedAt)
+  const words = countWords(version.content)
+
+  function startPin() {
+    setPinLabel(version.label ?? '')
+    setPinning(true)
+    setTimeout(() => inputRef.current?.focus(), 0)
+  }
+
+  function commitPin() {
+    const trimmed = pinLabel.trim()
+    onPin(trimmed || (version.label ?? 'Pinned version'))
+    setPinning(false)
+  }
+
+  return (
+    <div className="group flex flex-col gap-1 px-3 py-2.5 border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
+      {/* Top row: timestamp + badges */}
+      <div className="flex items-center gap-1.5 min-w-0">
+        <span className="flex-1 min-w-0 text-xs font-medium text-foreground truncate" title={timeLabel}>
+          {version.label ?? timeLabel}
+        </span>
+        {version.label && (
+          <span className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-primary/10 text-primary">
+            Pinned
+          </span>
+        )}
+        {version.auto && !version.label && (
+          <span className="shrink-0 text-[10px] text-muted-foreground/60">Auto</span>
+        )}
+      </div>
+
+      {/* Sub-row: word count + relative time when label shown */}
+      <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+        <span>{words.toLocaleString()} {words === 1 ? 'word' : 'words'}</span>
+        {version.label && (
+          <>
+            <span>·</span>
+            <span>{timeLabel}</span>
+          </>
+        )}
+      </div>
+
+      {/* Pin label input */}
+      {pinning && (
+        <input
+          ref={inputRef}
+          value={pinLabel}
+          onChange={(e) => setPinLabel(e.target.value)}
+          onBlur={commitPin}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commitPin()
+            if (e.key === 'Escape') setPinning(false)
+          }}
+          placeholder="Name this version…"
+          className="mt-0.5 w-full bg-background border border-input rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+        />
+      )}
+
+      {/* Actions — visible on hover */}
+      {!pinning && (
+        <div className="flex items-center gap-1 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            onClick={onRestore}
+            className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors rounded px-1.5 py-0.5 hover:bg-muted"
+            title="Restore this version"
+          >
+            <RotateCcw className="h-3 w-3" />
+            Restore
+          </button>
+          <button
+            onClick={startPin}
+            className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors rounded px-1.5 py-0.5 hover:bg-muted"
+            title={version.label ? 'Rename pin' : 'Pin this version'}
+          >
+            <Pin className="h-3 w-3" />
+            {version.label ? 'Rename' : 'Pin'}
+          </button>
+          <button
+            onClick={onDelete}
+            className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-destructive transition-colors rounded px-1.5 py-0.5 hover:bg-destructive/10 ml-auto"
+            title="Delete this version"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── HistoryDrawer ─────────────────────────────────────────────────────────────
+
+interface HistoryDrawerProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  doc: Doc
+  onSaveVersion: () => void
+  onRestore: (versionId: string) => void
+  onPin: (versionId: string, label: string) => void
+  onDelete: (versionId: string) => void
+}
+
+function HistoryDrawer({
+  open,
+  onOpenChange,
+  doc,
+  onSaveVersion,
+  onRestore,
+  onPin,
+  onDelete,
+}: HistoryDrawerProps) {
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side="right"
+        className="w-72 sm:max-w-xs p-0 flex flex-col gap-0"
+        showCloseButton={false}
+      >
+        {/* Header */}
+        <SheetHeader className="flex flex-row items-center justify-between px-4 py-3 border-b border-border shrink-0 gap-0">
+          <SheetTitle className="text-sm font-semibold">Version History</SheetTitle>
+          <div className="flex items-center gap-1">
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs gap-1.5"
+              onClick={onSaveVersion}
+              title="Save a version now"
+            >
+              <History className="h-3.5 w-3.5" />
+              Save now
+            </Button>
+            <SheetClose asChild>
+              <Button size="icon" variant="ghost" className="h-7 w-7">
+                <X className="h-3.5 w-3.5" />
+                <span className="sr-only">Close</span>
+              </Button>
+            </SheetClose>
+          </div>
+        </SheetHeader>
+
+        {/* Version list */}
+        <div className="flex-1 overflow-y-auto min-h-0">
+          {doc.versions.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-2 h-40 text-center px-6">
+              <History className="h-8 w-8 text-muted-foreground/40" />
+              <p className="text-sm text-muted-foreground">No versions yet</p>
+              <p className="text-xs text-muted-foreground/60">
+                Versions are saved automatically every 5 minutes of inactivity, when you switch
+                documents, or when you click "Save now".
+              </p>
+            </div>
+          ) : (
+            doc.versions.map((v) => (
+              <VersionItem
+                key={v.id}
+                version={v}
+                onRestore={() => onRestore(v.id)}
+                onPin={(label) => onPin(v.id, label)}
+                onDelete={() => onDelete(v.id)}
+              />
+            ))
+          )}
+        </div>
+
+        {/* Footer — version count */}
+        {doc.versions.length > 0 && (
+          <div className="px-4 py-2 border-t border-border shrink-0">
+            <p className="text-[11px] text-muted-foreground/60 text-center">
+              {doc.versions.filter((v) => !v.auto).length} pinned
+              {' · '}
+              {doc.versions.filter((v) => v.auto).length} auto
+              {' · '}
+              {doc.versions.length} total
+            </p>
+          </div>
+        )}
+      </SheetContent>
+    </Sheet>
+  )
+}
+
+// ── MarkdownEditorPage ────────────────────────────────────────────────────────
+
 export default function MarkdownEditorPage() {
   const {
     docs,
@@ -402,6 +617,10 @@ export default function MarkdownEditorPage() {
     updateDoc,
     setActiveDoc,
     setModel,
+    saveVersion,
+    restoreVersion,
+    deleteVersion,
+    pinVersion,
   } = useMarkdownEditorStore()
 
   const activeDoc = docs.find((d) => d.id === activeDocId) ?? docs[0]
@@ -412,6 +631,10 @@ export default function MarkdownEditorPage() {
   const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'))
   const [mobileTab, setMobileTab] = useState<'edit' | 'preview'>('edit')
   const [sheetOpen, setSheetOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+
+  // Inactivity timer ref — fires auto-version after INACTIVITY_MS of no typing
+  const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Track theme changes so CodeMirror re-builds extensions when .dark toggles
   useEffect(() => {
@@ -427,12 +650,28 @@ export default function MarkdownEditorPage() {
     extensionsRef.current = [markdownLang(), ...makeEditorTheme(dark)]
   }, [dark])
 
-  // When switching docs: save current editor state then restore (or create) target state
+  // Cleanup inactivity timer on unmount
+  useEffect(() => {
+    return () => {
+      if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current)
+    }
+  }, [])
+
+  // When switching docs: auto-version current doc (if content changed) then restore target state
   const switchDoc = useCallback(
     (newId: string) => {
       if (newId === activeDocId) return
 
-      // Save current state
+      // Cancel any pending inactivity snapshot for the outgoing doc
+      if (inactivityTimerRef.current) {
+        clearTimeout(inactivityTimerRef.current)
+        inactivityTimerRef.current = null
+      }
+
+      // Auto-snapshot outgoing doc on switch (saveVersion skips duplicates internally)
+      saveVersion(activeDocId, { auto: true })
+
+      // Save current editor state (preserves undo history)
       const view = editorRef.current?.view
       if (view) {
         stateMapRef.current.set(activeDocId, view.state)
@@ -440,7 +679,7 @@ export default function MarkdownEditorPage() {
 
       setActiveDoc(newId)
     },
-    [activeDocId, setActiveDoc],
+    [activeDocId, setActiveDoc, saveVersion],
   )
 
   // After activeDocId changes, restore the saved state into the view
@@ -472,6 +711,13 @@ export default function MarkdownEditorPage() {
 
   function handleEditorChange(value: string) {
     updateDoc(activeDoc.id, { content: value })
+
+    // Reset inactivity timer — fires auto-version after INACTIVITY_MS of no typing
+    if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current)
+    inactivityTimerRef.current = setTimeout(() => {
+      saveVersion(activeDoc.id, { auto: true })
+      inactivityTimerRef.current = null
+    }, INACTIVITY_MS)
   }
 
   function handleDownload() {
@@ -482,6 +728,38 @@ export default function MarkdownEditorPage() {
     a.download = `${activeDoc.title.replace(/[^a-z0-9]/gi, '-').toLowerCase()}.md`
     a.click()
     URL.revokeObjectURL(url)
+  }
+
+  /**
+   * Restore a version: snapshot current state, apply version content, and
+   * clear the EditorState entry so the existing useEffect re-creates a fresh
+   * EditorState from doc.content — wiping the undo stack cleanly (Option A).
+   */
+  function handleRestoreVersion(versionId: string) {
+    restoreVersion(activeDoc.id, versionId)
+    // Clear the cached EditorState so the useEffect below creates a fresh one
+    // from the restored content, giving a clean undo stack
+    stateMapRef.current.delete(activeDoc.id)
+    // Trigger the restore into the CodeMirror view by faking an activeDocId change effect
+    const view = editorRef.current?.view
+    if (view) {
+      // Get the freshly restored content from store (restoreVersion is synchronous)
+      const updatedDoc = useMarkdownEditorStore.getState().docs.find(
+        (d) => d.id === activeDoc.id,
+      )
+      if (updatedDoc) {
+        const freshState = EditorState.create({
+          doc: updatedDoc.content,
+          extensions: extensionsRef.current,
+        })
+        view.setState(freshState)
+      }
+    }
+    setHistoryOpen(false)
+  }
+
+  function handleManualSaveVersion() {
+    saveVersion(activeDoc.id, { auto: false })
   }
 
   // ── Toolbar ───────────────────────────────────────────────────────
@@ -534,6 +812,18 @@ export default function MarkdownEditorPage() {
       >
         <Download className="h-3.5 w-3.5" />
         <span className="hidden sm:inline">.md</span>
+      </Button>
+
+      {/* History button */}
+      <Button
+        variant="ghost"
+        size="icon"
+        className={cn('h-7 w-7', historyOpen && 'bg-muted')}
+        onClick={() => setHistoryOpen(true)}
+        title="Version history"
+        aria-label="Version history"
+      >
+        <History className="h-3.5 w-3.5" />
       </Button>
     </div>
   )
@@ -644,6 +934,17 @@ export default function MarkdownEditorPage() {
           onModelChange={setModel}
         />
       </div>
+
+      {/* ── History drawer (shared, works on mobile + desktop) ── */}
+      <HistoryDrawer
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        doc={activeDoc}
+        onSaveVersion={handleManualSaveVersion}
+        onRestore={handleRestoreVersion}
+        onPin={(versionId, label) => pinVersion(activeDoc.id, versionId, label)}
+        onDelete={(versionId) => deleteVersion(activeDoc.id, versionId)}
+      />
     </div>
   )
 }

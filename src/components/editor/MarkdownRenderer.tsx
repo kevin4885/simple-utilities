@@ -199,7 +199,7 @@ function makeMdComponents(dark: boolean, onCopy: (code: string) => void) {
     },
 
     hr({ ...props }: React.ComponentPropsWithoutRef<'hr'>) {
-      return <hr className="my-5 border-border" {...props} />
+      return <hr className="my-5 border-muted-foreground/30" {...props} />
     },
 
     table({ children, ...props }: React.ComponentPropsWithoutRef<'table'>) {

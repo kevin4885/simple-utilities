@@ -34,6 +34,7 @@ export default defineConfig({
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,ico,json}'],
         navigateFallback: '/index.html',
+        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024, // 4 MiB — gpt-tokenizer vocab makes markdown-editor chunk ~2.8 MB
         runtimeCaching: [
           {
             // USGS gauge API — network first so live data stays fresh,

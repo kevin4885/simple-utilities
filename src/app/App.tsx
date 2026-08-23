@@ -12,9 +12,9 @@ initTheme()
 export function App() {
   return (
     <BrowserRouter>
-      <div className="min-h-screen bg-background text-foreground">
+      <div className="h-screen flex flex-col overflow-hidden bg-background text-foreground">
         <Header />
-        <main>
+        <main className="flex-1 min-h-0">
           <Suspense
             fallback={
               <div className="flex items-center justify-center py-24 text-muted-foreground">

@@ -13,8 +13,9 @@ export function ToolPage() {
   const ToolComponent = tool.component
 
   return (
-    <div>
-      <div className="border-b bg-muted/30">
+    <div className="flex flex-col h-full">
+      {/* Breadcrumb bar */}
+      <div className="border-b bg-muted/30 shrink-0">
         <div className="px-6 py-3">
           <Link
             to="/"
@@ -27,15 +28,18 @@ export function ToolPage() {
           <span className="text-sm text-muted-foreground">{tool.category}</span>
         </div>
       </div>
-      <Suspense
-        fallback={
-          <div className="flex items-center justify-center py-24 text-muted-foreground">
-            Loading…
-          </div>
-        }
-      >
-        <ToolComponent />
-      </Suspense>
+      {/* Tool content — scrollable for normal tools, fills height for full-bleed tools */}
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        <Suspense
+          fallback={
+            <div className="flex items-center justify-center py-24 text-muted-foreground">
+              Loading…
+            </div>
+          }
+        >
+          <ToolComponent />
+        </Suspense>
+      </div>
     </div>
   )
 }

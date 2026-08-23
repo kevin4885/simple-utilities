@@ -26,6 +26,11 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import { Separator } from '@/components/ui/separator'
 import {
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle,
+} from '@/components/ui/resizable'
+import {
   countTokensGpt,
   countTokensApprox,
   countWords,
@@ -492,7 +497,7 @@ export default function MarkdownEditorPage() {
   // ── Full layout ───────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3.5rem)]">
+    <div className="flex flex-col h-full overflow-hidden">
 
       {/* ── Desktop layout (md+): sidebar + split panes ── */}
       <div className="hidden md:flex flex-1 min-h-0">
@@ -513,17 +518,19 @@ export default function MarkdownEditorPage() {
         <div className="flex-1 flex flex-col min-w-0 min-h-0">
           {toolbar}
 
-          <div className="flex flex-1 min-h-0">
+          <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0">
             {/* Editor */}
-            <div className="flex-1 min-w-0 min-h-0 border-r border-border overflow-hidden">
+            <ResizablePanel defaultSize="50" minSize="15" className="min-w-0 min-h-0 overflow-hidden">
               {editorPane}
-            </div>
+            </ResizablePanel>
+
+            <ResizableHandle withHandle />
 
             {/* Preview */}
-            <div className="flex-1 min-w-0 min-h-0 bg-background overflow-hidden">
+            <ResizablePanel defaultSize="50" minSize="15" className="min-w-0 min-h-0 overflow-hidden bg-background">
               {previewPane}
-            </div>
-          </div>
+            </ResizablePanel>
+          </ResizablePanelGroup>
 
           <StatusBar
             text={activeDoc.content}

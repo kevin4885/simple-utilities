@@ -101,6 +101,70 @@ for its own key. The only global key is `su:theme`.
 - Every tool with non-trivial logic gets a `logic.test.ts`
 - Import from `react-router` (not `react-router-dom` — that is the legacy v6 package)
 
+## Scrolling & layout model
+
+The app uses a **fixed-viewport flex column** — the page body never overflows or scrolls.
+There is exactly one scroll origin per page type.
+
+### Shell chain (App → ToolPage → tool)
+
+```
+<div class="h-screen flex flex-col overflow-hidden">   ← App.tsx — pins to viewport
+  <Header />                                            ← shrinks to content (sticky)
+  <main class="flex-1 min-h-0">                        ← fills remaining height
+    <div class="flex flex-col h-full">                  ← ToolPage.tsx
+      <div class="shrink-0">breadcrumb</div>            ← shrinks to content
+      <div class="flex-1 min-h-0 overflow-y-auto">      ← THE scroll origin for normal tools
+        <ToolComponent />
+      </div>
+    </div>
+  </main>
+</div>
+```
+
+### Rules for tool components
+
+**Normal (scrollable) tool** — the tool fills as much vertical space as it needs.
+The `overflow-y-auto` wrapper in `ToolPage` handles scrolling automatically.
+No special height classes needed in the tool component itself.
+
+```tsx
+// ✅ correct — just render content, ToolPage scrolls it
+export default function MyTool() {
+  return <div className="mx-auto max-w-2xl px-4 py-8 space-y-5">…</div>
+}
+```
+
+**Full-bleed tool** — the tool must fill the available height exactly and manage its own
+internal scroll (e.g. a split-pane editor). The tool must opt out of the ToolPage scroll wrapper
+by filling its container and hiding overflow at the top level.
+
+```tsx
+// ✅ correct — fills container, internal panes manage their own scroll
+export default function MyFullBleedTool() {
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* toolbar, status bar — shrink-0 */}
+      {/* scrollable panes — flex-1 min-h-0 overflow-y-auto (or overflow-hidden for CodeMirror) */}
+    </div>
+  )
+}
+```
+
+**Never use** `h-screen`, `min-h-screen`, or `h-[calc(100vh-…)]` inside a tool component —
+the viewport is already accounted for by the shell. Use `h-full` to fill the allocated space.
+
+### Scrollbar appearance
+
+Native scrollbars match the active colour scheme automatically because `src/index.css` sets:
+
+```css
+:root        { color-scheme: light; }
+.dark        { color-scheme: dark;  }
+```
+
+No per-component scrollbar styling is needed. Do not add custom `::-webkit-scrollbar` rules.
+
 ## PWA
 
 Installable PWA via `vite-plugin-pwa` (see `vite.config.ts` for the full config):

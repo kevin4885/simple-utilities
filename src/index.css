@@ -36,6 +36,7 @@
 
 /* ── Light mode ────────────────────────────────────────────────── */
 :root {
+  color-scheme: light;
   --background:             oklch(0.9848 0.0001 263.3);  /* ~#faf8f6 off-white  */
   --foreground:             oklch(0.2064 0.0388 265.6);  /* dark navy            */
 
@@ -75,6 +76,7 @@
 
 /* ── Dark mode ─────────────────────────────────────────────────── */
 .dark {
+  color-scheme: dark;
   --background:             oklch(0.177 0.032 264.5);    /* dark navy ~#0a1428   */
   --foreground:             oklch(0.9367 0.0112 78.2);   /* warm off-white       */
 

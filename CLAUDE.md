@@ -40,7 +40,9 @@ npm run format       # Format
 src/
   app/              # Shell: Layout, routing, Header, theme toggle
   lib/              # cn() helper, Zustand theme store
-  components/ui/    # shadcn/ui components — source of truth is the files themselves
+  components/
+    ui/             # shadcn/ui components — source of truth is the files themselves
+    editor/         # Shared editor components: CodeEditor, MarkdownRenderer (see editor/CLAUDE.md)
   tools/
     registry.ts     # THE source of truth for all tools, routes, and nav
     <category>/

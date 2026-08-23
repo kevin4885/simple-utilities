@@ -8,6 +8,8 @@ import {
 import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror'
 import { markdown as markdownLang } from '@codemirror/lang-markdown'
 import { EditorState, type Extension } from '@codemirror/state'
+import { EditorView } from '@codemirror/view'
+import { vscodeDark, vscodeLight } from '@uiw/codemirror-theme-vscode'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
@@ -39,11 +41,26 @@ import {
 } from './logic'
 import { useMarkdownEditorStore, type Doc, type Model } from './store'
 
-// ── Theme helpers ─────────────────────────────────────────────────────────────
-
-/** Read the current theme so CodeMirror can match it. */
-function isDarkMode() {
-  return document.documentElement.classList.contains('dark')
+// ── CodeMirror theme ──────────────────────────────────────────────────────────
+// Use vscodeDark / vscodeLight for proper syntax highlighting, then strip the
+// hardcoded background so the editor inherits the card surface beneath it.
+const makeEditorTheme = (dark: boolean): Extension[] => {
+  const base = dark ? vscodeDark : vscodeLight
+  const baseExts = Array.isArray(base) ? base : [base]
+  return [
+    ...baseExts,
+    EditorView.theme({
+      '&':                   { backgroundColor: 'transparent !important', height: '100%' },
+      '.cm-content':         { color: dark ? '#9ca3af' : '#374151' },
+      '.cm-scroller':        { backgroundColor: 'transparent !important', overflow: 'auto' },
+      '.cm-gutters':         {
+        backgroundColor: 'transparent !important',
+        borderRight: '1px solid color-mix(in srgb, currentColor 12%, transparent)',
+      },
+      '.cm-activeLineGutter':{ backgroundColor: 'rgba(128,128,128,0.08) !important' },
+      '.cm-activeLine':      { backgroundColor: 'rgba(128,128,128,0.08) !important' },
+    }),
+  ]
 }
 
 // ── Token counting ────────────────────────────────────────────────────────────
@@ -320,19 +337,23 @@ export default function MarkdownEditorPage() {
   // Per-document EditorState map — preserves undo history on doc switch
   const stateMapRef = useRef<Map<string, EditorState>>(new Map())
   const editorRef = useRef<ReactCodeMirrorRef>(null)
-  // Store the extensions so we can reconstruct EditorState for new docs
-  const extensionsRef = useRef<Extension[]>([markdownLang()])
-  const [dark, setDark] = useState(isDarkMode)
+  const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'))
   const [mobileTab, setMobileTab] = useState<'edit' | 'preview'>('edit')
   const [sheetOpen, setSheetOpen] = useState(false)
 
-  // Track theme changes so CodeMirror flips with the rest of the app
+  // Track theme changes so CodeMirror re-builds extensions when .dark toggles
   useEffect(() => {
     const el = document.documentElement
     const obs = new MutationObserver(() => setDark(el.classList.contains('dark')))
     obs.observe(el, { attributes: true, attributeFilter: ['class'] })
     return () => obs.disconnect()
   }, [])
+
+  // Recompute extensions when theme flips — stored so EditorState restores use same set
+  const extensionsRef = useRef<Extension[]>([markdownLang(), ...makeEditorTheme(dark)])
+  useEffect(() => {
+    extensionsRef.current = [markdownLang(), ...makeEditorTheme(dark)]
+  }, [dark])
 
   // When switching docs: save current editor state then restore (or create) target state
   const switchDoc = useCallback(
@@ -450,8 +471,8 @@ export default function MarkdownEditorPage() {
     <CodeMirror
       ref={editorRef}
       value={activeDoc.content}
-      extensions={[markdownLang()]}
-      theme={dark ? 'dark' : 'light'}
+      extensions={[markdownLang(), ...makeEditorTheme(dark)]}
+      theme="none"
       onChange={handleEditorChange}
       basicSetup={{
         lineNumbers: false,

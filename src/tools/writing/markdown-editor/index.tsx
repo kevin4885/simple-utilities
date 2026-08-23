@@ -20,6 +20,7 @@ import {
   Check,
   FileText,
   Download,
+  Pencil,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -190,10 +191,26 @@ function DocSidebar({
                 <span
                   className="flex-1 min-w-0 text-xs truncate"
                   onDoubleClick={() => startEdit(doc)}
-                  title={`${doc.title} (double-click to rename)`}
+                  title={doc.title}
                 >
                   {doc.title}
                 </span>
+              )}
+
+              {/* Rename button — visible on hover / active */}
+              {!isEditing && (
+                <button
+                  className={cn(
+                    'shrink-0 rounded p-0.5 transition-colors text-muted-foreground',
+                    'opacity-0 group-hover:opacity-100 hover:text-foreground hover:bg-muted',
+                    isActive && 'opacity-100',
+                  )}
+                  onClick={(e) => { e.stopPropagation(); startEdit(doc) }}
+                  title="Rename"
+                  aria-label={`Rename ${doc.title}`}
+                >
+                  <Pencil className="h-3 w-3" />
+                </button>
               )}
 
               {/* Delete — only show if more than 1 doc */}
@@ -318,7 +335,64 @@ function CopyButton({ getText, label }: { getText: () => string; label: string }
   )
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
+// ── InlineTitle ───────────────────────────────────────────────────────────────
+
+interface InlineTitleProps {
+  title: string
+  onRename: (title: string) => void
+}
+
+function InlineTitle({ title, onRename }: InlineTitleProps) {
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState(title)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  function startEdit() {
+    setValue(title)
+    setEditing(true)
+    setTimeout(() => { inputRef.current?.select() }, 0)
+  }
+
+  function commit() {
+    const trimmed = value.trim()
+    if (trimmed) onRename(trimmed)
+    setEditing(false)
+  }
+
+  // Keep value in sync if title changes externally (e.g. doc switch)
+  useEffect(() => {
+    if (!editing) setValue(title)
+  }, [title, editing])
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit()
+          if (e.key === 'Escape') setEditing(false)
+        }}
+        className="flex-1 min-w-0 bg-background border border-input rounded px-2 py-0.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+      />
+    )
+  }
+
+  return (
+    <button
+      onClick={startEdit}
+      title="Click to rename"
+      className="flex-1 min-w-0 flex items-center gap-1.5 group text-left px-1 rounded hover:bg-muted/60 transition-colors"
+    >
+      <span className="text-sm font-medium truncate text-foreground">{title}</span>
+      <Pencil className="h-3 w-3 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+    </button>
+  )
+}
+
+
 
 export default function MarkdownEditorPage() {
   const {
@@ -444,10 +518,11 @@ export default function MarkdownEditorPage() {
         </SheetContent>
       </Sheet>
 
-      {/* Active doc title */}
-      <span className="flex-1 min-w-0 text-sm font-medium truncate px-1 text-foreground">
-        {activeDoc.title}
-      </span>
+      {/* Active doc title — click to rename */}
+      <InlineTitle
+        title={activeDoc.title}
+        onRename={(title) => updateDoc(activeDoc.id, { title })}
+      />
 
       {/* Actions */}
       <CopyButton getText={() => activeDoc.content} label="Copy markdown" />

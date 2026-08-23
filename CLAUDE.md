@@ -18,30 +18,20 @@ No backend, no database. State persists via localStorage. May call public APIs f
 | Validation          | Zod v4 (localStorage reads, API responses)                                                  |
 | Testing             | Vitest v3 + Testing Library                                                                 |
 | Lint / format       | ESLint 9 (flat config) + Prettier                                                           |
-| Markdown editor     | `@uiw/react-codemirror` + `@codemirror/lang-markdown` (editor), `react-markdown` + `remark-gfm` (preview), `gpt-tokenizer` (token counting) |
+
+> Tool-specific libraries (e.g. CodeMirror, react-markdown, gpt-tokenizer) are listed in each
+> tool's own folder — check the source files there, not here.
+
 ## Commands
 
 ```powershell
-# Install
-npm install
-
-# Dev server (hot reload)
-npm run dev
-
-# Type-check + production build
-npm run build
-
-# Run all tests once
-npm test
-
-# Run tests in watch mode
-npm run test:watch
-
-# Lint
-npm run lint
-
-# Format
-npm run format
+npm install          # Install deps
+npm run dev          # Dev server (hot reload)
+npm run build        # Type-check + production build
+npm test             # Run all tests once
+npm run test:watch   # Tests in watch mode
+npm run lint         # Lint
+npm run format       # Format
 ```
 
 ## Architecture
@@ -49,95 +39,43 @@ npm run format
 ```
 src/
   app/              # Shell: Layout, routing, Header, theme toggle
-    App.tsx         # BrowserRouter + Routes (react-router v7)
-    Header.tsx      # Sticky header: title, category nav, theme toggle
-    HomePage.tsx    # Tool grid grouped by category
-    ToolPage.tsx    # Lazy-loads a tool by registry id
-    NotFoundPage.tsx
-  lib/
-    utils.ts        # cn() helper (clsx + tailwind-merge)
-    theme.ts        # Zustand theme store + initTheme()
-  components/
-    ui/             # Shared UI components (button, card, slider, checkbox, etc.)
+  lib/              # cn() helper, Zustand theme store
+  components/ui/    # shadcn/ui components — source of truth is the files themselves
   tools/
-    registry.ts     # THE source of truth — all tools declared here
-    colors/
-      color-converter/
-        index.tsx      # Color Converter UI (input, sliders, palette, harmonies, format table)
-        logic.ts       # Pure color math: parse, convert (RGB/HSL/HSV/HWB/OKLCH/CMYK), format, palette, harmonies
-        logic.test.ts  # Vitest unit tests
-        store.ts       # Zustand persist store (key: su:color-converter)
-    food/
-      pizza-dough/
-        index.tsx      # Pizza Dough Calculator UI
-        logic.ts       # Pure dough math functions
-        logic.test.ts  # Vitest unit tests
-        store.ts       # Zustand persist store (key: su:pizza-dough)
-      pepperoni-rolls/
-        index.tsx      # Pepperoni Rolls Calculator UI
-        logic.ts       # Pure dough math functions
-        logic.test.ts  # Vitest unit tests
-        store.ts       # Zustand persist store (key: su:pepperoni-rolls)
-    rivers/
-      llano-castell/
-        index.tsx      # Llano @ Castell trip tool (live USGS + DAR forecast + history chart)
-        logic.ts       # Pure functions: trip window, DAR interpolation, MRC, wading
-        logic.test.ts  # 88 Vitest unit tests (incl. cross-check acceptance tests)
-        schemas.ts     # Zod schemas for USGS IV API response + localStorage cache
-        store.ts       # Zustand persist store (key: su:llano-castell)
-        useGaugeData.ts # React hook: USGS fetch + 15-min cache + stale detection
-        HistoryChart.tsx # Hand-rolled SVG log-scale bar chart (11 years + forecast)
-        trip_stats.json  # Static: 10 historical trip years (exported from llano repo)
-        mrc_params.json  # Static: MRC τ params + DAR constants (exported from llano repo)
-    3d-printing/
-      gridfinity-baseplate/   # ⚠ WIP — not yet in registry.ts; no index.tsx or store.ts yet
-        logic.ts       # Pure geometry: splitting algorithm, plate/bowtie mesh builder, binary STL + 3MF writers
-        logic.test.ts  # Vitest unit tests (manifold checks, volume, STL byte layout, 3MF ZIP magic)
-    writing/
-      markdown-editor/
-        index.tsx      # Markdown Editor UI (split-pane desktop, tabbed mobile, Sheet sidebar)
-        logic.ts       # Pure functions: token counting (GPT exact, Claude/Gemini approx), word/char/line counts, doc title gen
-        logic.test.ts  # Vitest unit tests
-        store.ts       # Zustand persist store (key: su:markdown-editor) — multi-doc, active doc, model selection
+    registry.ts     # THE source of truth for all tools, routes, and nav
+    <category>/
+      <tool-id>/    # One folder per tool — see src/tools/CLAUDE.md for the pattern
   main.tsx
-  index.css         # Tailwind v4: @import + @theme inline + OKLCH tokens (no tailwind.config.js)
-  test-setup.ts     # Vitest + Testing Library global setup
+  index.css         # Tailwind v4 @import + @theme inline + OKLCH tokens
 ```
+
+**Always check `registry.ts` for the current tool list — do not rely on documentation.**
+**Always check `src/components/ui/` for the current shadcn component list — do not rely on documentation.**
 
 ## Theming
 
-Theme is controlled via a CSS class on `<html>`:
+Theme is controlled via a CSS class on `<html>`: no class or `.light` = light mode; `.dark` = dark mode.
 
-- No class / `.light` → light mode
-- `.dark` → dark mode
-
-Colors are defined as **OKLCH** CSS variables in `src/index.css` and exposed to Tailwind
-via `@theme inline`. Use semantic utilities everywhere — never hardcode raw colors.
-
-### Token reference
-
-| Token                      | Light                                | Dark                                     |
-| -------------------------- | ------------------------------------ | ---------------------------------------- |
-| `--background`             | `oklch(0.9848 0.0001 263.3)`         | `oklch(0.177 0.032 264.5)` (navy)        |
-| `--foreground`             | `oklch(0.2064 0.0388 265.6)`         | `oklch(0.9367 0.0112 78.2)` (warm white) |
-| `--primary`                | `oklch(0.5449 0.2154 262.7)` (blue)  | `oklch(0.7574 0.1398 85.8)` (gold)       |
-| `--secondary` / `--accent` | `oklch(0.7066 0.1859 48.1)` (orange) | same                                     |
-| `--card`                   | `oklch(1.0 0.0 0)`                   | `oklch(0.225 0.0487 264.1)`              |
-| `--muted`                  | `oklch(0.9514 0.0106 248.1)`         | `oklch(0.2799 0.0426 263.5)`             |
-| `--border` / `--input`     | `oklch(0.9008 0.0178 255.1)`         | `oklch(0.177 / 0.3195 ...)`              |
+Colors are **OKLCH** CSS variables defined in `src/index.css`, exposed to Tailwind via `@theme inline`.
+Use semantic utility classes everywhere (`bg-background`, `text-muted-foreground`, etc.) — never hardcode raw colors.
+The full token set is the source of truth in `src/index.css`.
 
 Theme choice is stored in localStorage under key `su:theme`.
 
 ## shadcn/ui components
 
-Components live in `src/components/ui/` and are managed by the shadcn CLI (`components.json`).
-To add a new component: `npx shadcn@latest add <name>`
+Components live in `src/components/ui/` and are managed by the shadcn CLI.
 
-Current components: `alert-dialog`, `button`, `card`, `checkbox`, `collapsible`, `label`, `separator`, `sheet`, `slider`, `tabs`, `toggle`, `toggle-group`
+```powershell
+npx shadcn@latest add <name>   # Add or update a component
+```
+
+**Never hand-roll shadcn components.** Always use the CLI.
+The installed component list is whatever is in `src/components/ui/` — that is the source of truth.
 
 All components import from the unified `radix-ui` package (not individual `@radix-ui/*` packages).
 
-### Slider API
+### Slider API gotcha
 
 The shadcn Slider uses the Radix array API. Always pass arrays:
 
@@ -147,41 +85,26 @@ The shadcn Slider uses the Radix array API. Always pass arrays:
 
 ## Tool registry pattern
 
-Every tool is:
-
-1. A folder under `src/tools/<category>/<tool-id>/`
-2. A single entry in `src/tools/registry.ts`
-
-Routes (`/tools/:id`), the home-page grid, and the nav are all derived from `registry.ts`.
+Every tool is a folder under `src/tools/<category>/<tool-id>/` plus one entry in `registry.ts`.
+Routes, the home-page grid, and the nav are all derived from `registry.ts` automatically.
 See `src/tools/CLAUDE.md` for step-by-step instructions on adding a new tool.
 
 ## localStorage key convention
 
-All keys are prefixed `su:` to avoid collisions.
-
-- `su:theme` — theme preference
-- `su:color-converter` — Color Converter: last input value, slider mode (rgb/hsl/hsv), color history (up to 50 hex entries)
-- `su:pizza-dough` — Pizza Dough Calculator inputs
-- `su:pepperoni-rolls` — Pepperoni Rolls Calculator inputs
-- `su:llano-castell` — Llano @ Castell: cached USGS gauge readings (P7D) + fetch timestamp
-- `su:markdown-editor` — Markdown Editor: multi-doc list, active doc id, selected token model
-
-> `3d-printing/gridfinity-baseplate` has no store yet (WIP — no `index.tsx` or registry entry).
+All keys are prefixed `su:` to avoid collisions. Each tool's `store.ts` is the source of truth
+for its own key. The only global key is `su:theme`.
 
 ## Constraints
 
 - Frontend only — no server-side code, no build-time secrets
-- Add shadcn components via CLI (`npx shadcn@latest add <name>`), never hand-roll them
 - All localStorage reads must be validated with Zod before use
 - Every tool with non-trivial logic gets a `logic.test.ts`
 - Import from `react-router` (not `react-router-dom` — that is the legacy v6 package)
 
 ## PWA
 
-The app is an installable PWA via `vite-plugin-pwa` (configured in `vite.config.ts`):
+Installable PWA via `vite-plugin-pwa` (see `vite.config.ts` for the full config):
 
-- **Service worker** — Workbox `generateSW`, `registerType: 'autoUpdate'` (registered in `src/main.tsx` via `virtual:pwa-register`). All built assets are precached; SPA navigation falls back to `index.html`.
-- **Runtime caching** — USGS API (`waterservices.usgs.gov`) uses NetworkFirst (10 s timeout, 24 h expiry) so the Llano tool works offline with last-known data.
-- **Manifest** — generated from the config; theme/background color `#141c33` (dark navy, matches dark `--background`).
-- **Icons** — in `public/`: `favicon.svg` (source-of-truth design: gold→orange wrench on navy rounded square), `pwa-192x192.png`, `pwa-512x512.png`, `maskable-512x512.png` (glyph inside the 80% safe zone), `apple-touch-icon.png` (180px full-bleed; iOS applies its own corner mask).
-- The service worker is only generated in production builds (`npm run build`); dev mode is unaffected.
+- Workbox `generateSW` with `autoUpdate`; all built assets precached; SPA falls back to `index.html`
+- Service worker only generated in production builds — dev mode is unaffected
+- Manifest, icons, and runtime caching rules are all in `vite.config.ts`

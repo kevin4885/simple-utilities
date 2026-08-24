@@ -64,6 +64,21 @@ The full token set is the source of truth in `src/index.css`.
 
 Theme choice is stored in localStorage under key `su:theme`.
 
+### Dark-mode border gotcha (`--border` vs `--input`)
+
+In dark mode this theme intentionally sets `--border` **equal to** `--background` — structural
+borders (panel dividers, card outlines) disappear and contrast comes from surface colors
+(`bg-card`, `bg-muted/40`) instead. `--input` remains a visible lighter tone in dark mode.
+
+Consequence — **form controls must never use `border-border`**, or they become invisible in
+dark mode:
+
+- Prefer the shadcn `Input` / `Textarea` components from `src/components/ui/` (they use
+  `border-input` and dark-mode `bg-input/30` correctly, plus `aria-invalid` styling for errors).
+- If you must hand-roll a control, use `border-input`, never `border-border`.
+- `border-border` is fine for structural separators where invisibility in dark mode is the
+  intended design.
+
 ## shadcn/ui components
 
 Components live in `src/components/ui/` and are managed by the shadcn CLI.

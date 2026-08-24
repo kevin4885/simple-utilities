@@ -9,6 +9,7 @@ import { useDeferredValue, useState, useCallback } from 'react'
 import { decodeJwt, buildClaimInfos, isExpired } from './logic'
 import type { ClaimInfo } from './logic'
 import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
 import { Copy, Trash2, AlertTriangle, CheckCircle2, ShieldAlert } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -186,21 +187,14 @@ export default function JwtDecoder() {
           {/* Token input */}
           <div className="space-y-1.5">
             <label className="text-sm font-medium">JWT Token</label>
-            <textarea
+            <Textarea
               value={token}
               onChange={(e) => setToken(e.target.value)}
               placeholder="Paste your JWT here…"
               spellCheck={false}
               rows={4}
-              className={cn(
-                'w-full rounded-md border bg-background px-3 py-2 font-mono text-xs',
-                'placeholder:text-muted-foreground',
-                'focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent',
-                'resize-none',
-                result?.ok === false && token.trim()
-                  ? 'border-destructive'
-                  : 'border-border',
-              )}
+              aria-invalid={result?.ok === false && token.trim() !== ''}
+              className="min-h-24 resize-none font-mono text-xs"
             />
           </div>
 

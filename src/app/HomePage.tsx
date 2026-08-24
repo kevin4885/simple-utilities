@@ -17,10 +17,10 @@ export function HomePage() {
     : categories
 
   return (
-    <div className="flex min-h-[calc(100vh-57px)]">
+    <div className="flex h-full">
 
       {/* ── Desktop Sidebar ── */}
-      <aside className="hidden md:flex flex-col gap-1 w-52 shrink-0 border-r px-4 py-6 sticky top-[57px] h-[calc(100vh-57px)] overflow-y-auto">
+      <aside className="hidden md:flex flex-col gap-1 w-52 shrink-0 border-r px-4 py-6 h-full overflow-y-auto">
         <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 px-3">
           Categories
         </p>
@@ -40,7 +40,7 @@ export function HomePage() {
       </aside>
 
       {/* ── Main Content ── */}
-      <main className="flex-1 px-6 py-8 space-y-10 min-w-0">
+      <main className="flex-1 px-6 py-8 space-y-10 min-w-0 overflow-y-auto">
         <div>
           <h1 className="text-3xl font-bold">Simple Utilities</h1>
           <p className="mt-2 text-muted-foreground">

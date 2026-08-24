@@ -11,6 +11,37 @@ export interface ToolDef {
 
 export const tools: ToolDef[] = [
   {
+    id: 'word-counter',
+    category: 'Text',
+    title: 'Word & Character Counter',
+    description:
+      'Live word, character, sentence, paragraph, and line counts. Reading and speaking time estimates. ' +
+      'Top-10 word frequency table with stopword filter. Copy a plain-text stats summary in one click.',
+    keywords: [
+      'word count',
+      'character count',
+      'counter',
+      'text',
+      'statistics',
+      'reading time',
+      'speaking time',
+      'sentences',
+      'paragraphs',
+      'lines',
+      'frequency',
+      'word frequency',
+      'stopwords',
+      'letters',
+      'digits',
+      'punctuation',
+      'whitespace',
+      'unicode',
+      'wpm',
+      'text analysis',
+    ],
+    component: lazy(() => import('./text/word-counter/index')),
+  },
+  {
     id: 'unit-converter',
     category: 'Converters',
     title: 'Unit Converter',

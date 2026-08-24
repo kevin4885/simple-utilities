@@ -1,11 +1,20 @@
 import { useState } from 'react'
-import { Sun, Moon, Wrench, Menu, X } from 'lucide-react'
+import { Sun, Moon, Wrench, Menu, X, Search } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router'
 import { Button } from '@/components/ui/button'
 import { useThemeStore } from '@/lib/theme'
 import { categories } from '@/tools/registry'
 
-export function Header() {
+// Detect Mac once at module load; stable across renders
+const isMac =
+  typeof navigator !== 'undefined' &&
+  /Mac|iPhone|iPad|iPod/.test(navigator.platform)
+
+interface HeaderProps {
+  onSearchClick: () => void
+}
+
+export function Header({ onSearchClick }: HeaderProps) {
   const { theme, setTheme } = useThemeStore()
   const [menuOpen, setMenuOpen] = useState(false)
   const [searchParams] = useSearchParams()
@@ -24,6 +33,8 @@ export function Header() {
       : 'rounded-full px-3 py-1 text-sm font-medium bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground transition-colors'
   }
 
+  const kbdHint = isMac ? '⌘K' : 'Ctrl+K'
+
   return (
     <header className="sticky top-0 z-50 border-b bg-card/80 backdrop-blur-sm [padding-top:env(safe-area-inset-top)]">
       <div className="flex items-center gap-4 px-6 py-3">
@@ -38,6 +49,20 @@ export function Header() {
 
         {/* Spacer */}
         <div className="flex-1" />
+
+        {/* Search trigger — styled like an input control on wider screens */}
+        <button
+          type="button"
+          onClick={onSearchClick}
+          aria-label="Search tools"
+          className="flex items-center gap-2 rounded-md border border-input bg-muted/40 px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground shrink-0"
+        >
+          <Search className="h-4 w-4 shrink-0" />
+          <span className="hidden sm:inline">Search tools…</span>
+          <kbd className="hidden sm:inline-flex items-center rounded border border-input bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground select-none">
+            {kbdHint}
+          </kbd>
+        </button>
 
         {/* Theme toggle */}
         <Button

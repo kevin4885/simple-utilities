@@ -38,8 +38,8 @@ npm run format       # Format
 
 ```
 src/
-  app/              # Shell: Layout, routing, Header, theme toggle
-  lib/              # cn() helper, Zustand theme store
+  app/              # Shell: Layout, routing, Header, theme toggle, CommandPalette
+  lib/              # cn() helper, Zustand theme store, search.ts (Fuse.js tool search)
   components/
     ui/             # shadcn/ui components — source of truth is the files themselves
     editor/         # Shared editor components: CodeEditor, MarkdownRenderer (see editor/CLAUDE.md)
@@ -50,6 +50,21 @@ src/
   main.tsx
   index.css         # Tailwind v4 @import + @theme inline + OKLCH tokens
 ```
+
+## Command palette (global tool search)
+
+A Ctrl+K / Cmd+K command palette is mounted once in `App.tsx` and provides fuzzy
+search across all tools via Fuse.js.
+
+- **Search logic:** `src/lib/search.ts` — exports `searchTools(query)` backed by a
+  Fuse.js index over all tools with weighted keys (title 0.5, keywords 0.35,
+  description 0.15). Empty query returns all tools in registry order; non-empty
+  returns ranked fuzzy matches.
+- **UI:** `src/app/CommandPalette.tsx` — uses shadcn `CommandDialog` pattern
+  (Dialog + Command with `shouldFilter={false}`) so Fuse drives filtering.
+  Results are grouped by category, ranked by Fuse score within each group.
+- **Trigger:** search button in `Header.tsx` (Search icon + "Search tools…" label +
+  Ctrl+K / ⌘K hint). Keyboard shortcut is also registered globally in `App.tsx`.
 
 **Always check `registry.ts` for the current tool list — do not rely on documentation.**
 **Always check `src/components/ui/` for the current shadcn component list — do not rely on documentation.**

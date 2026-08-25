@@ -54,6 +54,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
 } from 'react'
 import { createPortal } from 'react-dom'
 import { useEditor, EditorContent } from '@tiptap/react'
@@ -516,6 +517,91 @@ function buildSlashExtension(
 }
 
 // ---------------------------------------------------------------------------
+// Selection-rect helper — used to anchor popovers to the current selection
+// ---------------------------------------------------------------------------
+
+/** Viewport-relative bounding box of the current editor selection. */
+interface SelectionRect {
+  top: number
+  left: number
+  width: number
+  height: number
+}
+
+/**
+ * Returns the viewport rect of the current ProseMirror selection so the
+ * Radix PopoverAnchor can be placed exactly at the selected content.
+ *
+ * Strategy:
+ *   • Image (node selection): editor.view.nodeDOM(pos) gives the actual
+ *     <img> element whose getBoundingClientRect() returns exact image bounds.
+ *     coordsAtPos on a node position only returns the cursor position *before*
+ *     the node, not the node's visual bounds — so nodeDOM is preferred here.
+ *   • Text / mark selections (links, plain text): coordsAtPos(from) and
+ *     coordsAtPos(to) return viewport {top,left,bottom,right} coords and are
+ *     the most reliable source for text-based selections.
+ */
+function getSelectionRect(editor: Editor): SelectionRect | null {
+  const { state, view } = editor
+  const { selection } = state
+
+  try {
+    // Image node selection — get the image element's actual bounding rect.
+    if (editor.isActive('image')) {
+      const nodeDom = view.nodeDOM(selection.from)
+      if (nodeDom instanceof Element) {
+        const r = nodeDom.getBoundingClientRect()
+        return { top: r.top, left: r.left, width: r.width, height: r.height }
+      }
+    }
+
+    // Text / mark selection (or cursor inside a link mark).
+    // coordsAtPos returns viewport coordinates — no scroll math needed.
+    const fromCoords = view.coordsAtPos(selection.from)
+    const toCoords   = view.coordsAtPos(Math.max(selection.from, selection.to))
+    const top    = Math.min(fromCoords.top,    toCoords.top)
+    const left   = Math.min(fromCoords.left,   toCoords.left)
+    const bottom = Math.max(fromCoords.bottom, toCoords.bottom)
+    const right  = Math.max(fromCoords.right,  toCoords.right)
+    // Ensure at least 1 px so Radix has a real box to anchor against.
+    return {
+      top,
+      left,
+      width:  Math.max(right - left, 1),
+      height: Math.max(bottom - top, 1),
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Converts a SelectionRect (or null) to a `position:fixed` CSSProperties object
+ * suitable for the hidden PopoverAnchor span. Radix reads the anchor's
+ * getBoundingClientRect() — using `fixed` + viewport coords from coordsAtPos /
+ * getBoundingClientRect means no page-scroll offset math is needed.
+ *
+ * Assumption: no CSS-transformed ancestor above `.wysiwyg-root` (a transform
+ * would make `position:fixed` relative to that ancestor, not the viewport, which
+ * would offset the popover). The current app shell has no such transforms.
+ */
+function anchorRectToStyle(rect: SelectionRect | null): CSSProperties {
+  if (rect) {
+    return {
+      position: 'fixed',
+      top: rect.top,
+      left: rect.left,
+      width: rect.width,
+      height: rect.height,
+      pointerEvents: 'none',
+      visibility: 'hidden',
+    }
+  }
+  // Fallback: 1×1 px at viewport origin — degrades gracefully when rect unavailable.
+  return { position: 'fixed', top: 0, left: 0, width: 1, height: 1, pointerEvents: 'none', visibility: 'hidden' }
+}
+
+// ---------------------------------------------------------------------------
 // LinkPopover — modal-free inline form for inserting/editing links
 // ---------------------------------------------------------------------------
 
@@ -527,6 +613,12 @@ interface LinkPopoverState {
   initialHref: string
   /** True when editing an existing link (shows "Remove link" button) */
   isEditing: boolean
+  /**
+   * Viewport rect of the selection at open-time. Captured once when the
+   * popover opens and applied as `position:fixed` to the PopoverAnchor span
+   * so Radix positions the form next to the link/image, not at the corner.
+   */
+  anchorRect: SelectionRect | null
 }
 
 interface LinkPopoverProps {
@@ -660,12 +752,17 @@ function LinkPopover({ state, onSave, onRemove, onClose }: LinkPopoverProps) {
   // causing LinkForm to remount with fresh useState initializers — no effect needed.
   const formKey = `${state.open}|${state.initialText}|${state.initialHref}`
 
+  // anchorRectToStyle applies anchorRect as a fixed-position invisible span.
+  // Radix measures PopoverAnchor's getBoundingClientRect() to place the content,
+  // so giving the span real viewport coordinates anchors the form to the selection.
+
   return (
     <Popover open={state.open} onOpenChange={(open) => { if (!open) onClose() }}>
-      {/* PopoverAnchor attaches to nothing — we position manually via PopoverContent's
-          side="bottom" and the popover renders portalled to body anyway */}
+      {/* Fixed-position anchor span placed at the selection's viewport rect.
+          Radix reads this element's getBoundingClientRect() to position the
+          PopoverContent, so the form appears adjacent to the link text. */}
       <PopoverAnchor asChild>
-        <span style={{ position: 'absolute', visibility: 'hidden', pointerEvents: 'none' }} />
+        <span style={anchorRectToStyle(state.anchorRect)} />
       </PopoverAnchor>
       <PopoverContent
         className="w-80 p-4"
@@ -695,6 +792,11 @@ interface ImagePopoverState {
   initialSrc: string
   initialAlt: string
   isEditing: boolean
+  /**
+   * Viewport rect of the selection at open-time. Same fixed-position anchor
+   * strategy as LinkPopover — captured once at open, drives PopoverAnchor.
+   */
+  anchorRect: SelectionRect | null
 }
 
 interface ImagePopoverProps {
@@ -821,10 +923,15 @@ function ImagePopover({ state, onSave, onRemove, onClose }: ImagePopoverProps) {
   // causing ImageForm to remount with fresh useState initializers — no effect needed.
   const formKey = `${state.open}|${state.initialSrc}|${state.initialAlt}`
 
+  // Same fixed-position anchor strategy as LinkPopover — see anchorRectToStyle.
+
   return (
     <Popover open={state.open} onOpenChange={(open) => { if (!open) onClose() }}>
+      {/* Fixed-position anchor span placed at the image's viewport rect.
+          Radix reads this element's getBoundingClientRect() to position the
+          PopoverContent, so the form appears adjacent to the selected image. */}
       <PopoverAnchor asChild>
-        <span style={{ position: 'absolute', visibility: 'hidden', pointerEvents: 'none' }} />
+        <span style={anchorRectToStyle(state.anchorRect)} />
       </PopoverAnchor>
       <PopoverContent
         className="w-80 p-4"
@@ -905,6 +1012,7 @@ export default function WysiwygEditor({
     initialText: '',
     initialHref: '',
     isEditing: false,
+    anchorRect: null,
   })
 
   // Ref for openLinkPopover so it can be called from the slash extension
@@ -916,6 +1024,7 @@ export default function WysiwygEditor({
     initialSrc: '',
     initialAlt: '',
     isEditing: false,
+    anchorRect: null,
   })
 
   // Ref for openImagePopover so it can be called from the slash extension
@@ -1054,22 +1163,30 @@ export default function WysiwygEditor({
         }
       }
 
+      // Capture the selection's viewport rect so the popover can be anchored
+      // to the link text rather than the page corner.
+      const anchorRect = getSelectionRect(editor)
+
       setLinkPopover({
         open: true,
         initialText: prefillText,
         initialHref: linkAttrs.href ?? '',
         isEditing,
+        anchorRect,
       })
     }
 
     openImageRef.current = () => {
       if (!editor) return
       const imageAttrs = editor.getAttributes('image') as { src?: string; alt?: string }
+      // Capture the image's viewport rect for anchor positioning.
+      const anchorRect = getSelectionRect(editor)
       setImagePopover({
         open: true,
         initialSrc: imageAttrs.src ?? '',
         initialAlt: imageAttrs.alt ?? '',
         isEditing: editor.isActive('image'),
+        anchorRect,
       })
     }
   })

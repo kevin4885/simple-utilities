@@ -226,9 +226,21 @@ This ensures only one bubble menu is ever visible at a time.
 
 The link/image **popover forms** (shadcn `Popover`) are rendered separately from the
 bubble toolbars — they are portalled to `<body>` by Radix UI's `PopoverPortal`.
-The `PopoverAnchor` is a hidden `position:absolute` span that lets the popover open
-without a visible trigger element. Because the popover content is portalled to body,
-it naturally layers above the editor and the BubbleMenu toolbars.
+
+**Anchor positioning:** The `PopoverAnchor` is a `position:fixed` invisible span whose
+viewport coordinates are set at the moment the popover opens (`getSelectionRect(editor)`
+in `WysiwygEditor.tsx`). Radix reads the anchor element's `getBoundingClientRect()` to
+place the `PopoverContent`, so the form appears adjacent to the selected link text or
+image rather than at the page corner.
+
+- For **link/text selections**, `editor.view.coordsAtPos(from/to)` returns viewport coords.
+- For **image node selections**, `editor.view.nodeDOM(pos).getBoundingClientRect()` returns
+  the image element's exact bounds (coordsAtPos only gives the cursor position *before*
+  the node, not the visual image bounds).
+
+The anchor rect is captured once when the popover opens; it is not recalculated while open.
+`position:fixed` is used so viewport coords from coordsAtPos/getBoundingClientRect map
+directly without page-scroll offset math.
 
 Inner form components (`LinkForm`, `ImageForm`) are remounted via a `key` prop
 whenever the popover (re-)opens — this resets `useState` initializers cleanly without

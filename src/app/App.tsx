@@ -43,7 +43,7 @@ export function App() {
 
   return (
     <BrowserRouter>
-      <div className="h-screen flex flex-col overflow-hidden bg-background text-foreground">
+      <div className="h-dvh flex flex-col overflow-hidden overscroll-none bg-background text-foreground">
         <Header onSearchClick={openPalette} />
         <main className="flex-1 min-h-0">
           <Suspense

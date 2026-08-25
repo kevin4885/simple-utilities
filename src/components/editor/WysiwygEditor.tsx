@@ -14,6 +14,21 @@
  * No tippy.js — uses a simple absolute-positioned div anchored to the cursor
  * DOMRect. @floating-ui/dom is available as a transitive dep but not needed.
  *
+ * BUBBLE MENUS (BubbleMenu from @tiptap/react/menus):
+ *   Three bubble menus are registered; only one can show at a time, gated by
+ *   precise shouldShow callbacks so they never fight each other:
+ *     1. LinkBubble  — when link mark is active (and image NOT selected)
+ *     2. ImageBubble — when image node is selected
+ *     3. TableBubble — when cursor is inside a table (and no link / image)
+ *
+ *   Popover forms (shadcn Popover + Input + Button + Label) are used for
+ *   inserting/editing links and images. The BubbleMenus host small inline
+ *   toolbars; edit actions open the corresponding popover programmatically.
+ *
+ * URL normalisation: normalizeUrl() (src/components/editor/wysiwyg-utils.ts)
+ *   prepends https:// to bare domains; leaves mailto:, #anchors, data: URIs,
+ *   relative paths, and URLs that already have a scheme untouched.
+ *
  * Props
  * ─────
  *   value       — markdown string (single source of truth)
@@ -23,6 +38,8 @@
  *   className   — extra wrapper classes
  *   minimal     — when true: no slash menu; pure keyboard surface for inline
  *                 embedding (e.g. LLM prompt input). Input rules still apply.
+ *                 Link/Image/Table bubble menus still work in minimal mode
+ *                 (they are useful even in inline embedding).
  *
  * Dark mode: tracked via MutationObserver on document.documentElement.classList,
  * same pattern as CodeEditor.tsx / MarkdownRenderer.tsx.
@@ -40,6 +57,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { useEditor, EditorContent } from '@tiptap/react'
+import { BubbleMenu } from '@tiptap/react/menus'
 import StarterKit from '@tiptap/starter-kit'
 import { Table } from '@tiptap/extension-table'
 import { TableRow } from '@tiptap/extension-table-row'
@@ -60,7 +78,27 @@ import type {
 } from '@tiptap/suggestion'
 import { Extension } from '@tiptap/core'
 import type { Editor } from '@tiptap/core'
+import {
+  RowsIcon,
+  TableIcon,
+  Columns3Icon,
+  Trash2Icon,
+  ExternalLinkIcon,
+  PencilIcon,
+  UnlinkIcon,
+  MinusIcon,
+  PlusIcon,
+} from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+  Popover,
+  PopoverContent,
+  PopoverAnchor,
+} from '@/components/ui/popover'
+import { normalizeUrl } from './wysiwyg-utils'
 
 // ---------------------------------------------------------------------------
 // Slash-menu command definitions
@@ -71,8 +109,12 @@ interface SlashCommand {
   description: string
   keywords: string[]
   icon: string
-  action: (editor: Editor) => void
+  action: (editor: Editor, openLinkPopover: () => void, openImagePopover: () => void) => void
 }
+
+// The slash command for link will call openLinkPopover (injected at runtime).
+// The slash command for image will call openImagePopover (injected at runtime).
+// This avoids window.prompt entirely.
 
 const SLASH_COMMANDS: SlashCommand[] = [
   {
@@ -200,9 +242,9 @@ const SLASH_COMMANDS: SlashCommand[] = [
     description: 'Insert a hyperlink',
     keywords: ['link', 'href', 'url', 'a', 'anchor'],
     icon: '🔗',
-    action: (e) => {
-      const url = window.prompt('Enter URL:')
-      if (url) e.chain().focus().setLink({ href: url }).run()
+    // openLinkPopover is injected at runtime via the slash command dispatch
+    action: (_e, openLinkPopover) => {
+      openLinkPopover()
     },
   },
   {
@@ -210,9 +252,9 @@ const SLASH_COMMANDS: SlashCommand[] = [
     description: 'Insert an image by URL',
     keywords: ['image', 'img', 'picture', 'photo', '![]'],
     icon: '🖼',
-    action: (e) => {
-      const url = window.prompt('Enter image URL:')
-      if (url) e.chain().focus().setImage({ src: url }).run()
+    // openImagePopover is injected at runtime via the slash command dispatch
+    action: (_e, _openLink, openImagePopover) => {
+      openImagePopover()
     },
   },
 ]
@@ -386,6 +428,10 @@ function buildSlashExtension(
   setMenuRef: React.MutableRefObject<((s: SlashMenuState | null) => void) | null>,
   /** Ref that SlashMenuInner will populate with its onKeyDown handler */
   handleRef: React.MutableRefObject<SlashMenuHandle | null>,
+  /** Ref to the openLinkPopover callback (populated after component mounts) */
+  openLinkRef: React.MutableRefObject<(() => void) | null>,
+  /** Ref to the openImagePopover callback (populated after component mounts) */
+  openImageRef: React.MutableRefObject<(() => void) | null>,
 ): Extension {
   let itemsVersion = 0
 
@@ -407,7 +453,12 @@ function buildSlashExtension(
             props: SlashCommand
           }) {
             editor.chain().focus().deleteRange(range).run()
-            props.action(editor)
+            // Inject the popover openers into the action call
+            props.action(editor, () => {
+              openLinkRef.current?.()
+            }, () => {
+              openImageRef.current?.()
+            })
           },
           items({ query }: { query: string }): SlashCommand[] {
             const q = query.toLowerCase()
@@ -465,6 +516,336 @@ function buildSlashExtension(
 }
 
 // ---------------------------------------------------------------------------
+// LinkPopover — modal-free inline form for inserting/editing links
+// ---------------------------------------------------------------------------
+
+interface LinkPopoverState {
+  open: boolean
+  /** Initial text — empty for new, pre-filled from selection for wrap */
+  initialText: string
+  /** Initial href — empty for new, pre-filled for edit */
+  initialHref: string
+  /** True when editing an existing link (shows "Remove link" button) */
+  isEditing: boolean
+}
+
+interface LinkPopoverProps {
+  state: LinkPopoverState
+  onSave: (text: string, href: string) => void
+  onRemove: () => void
+  onClose: () => void
+}
+
+interface LinkFormProps {
+  initialText: string
+  initialHref: string
+  isEditing: boolean
+  onSave: (text: string, href: string) => void
+  onRemove: () => void
+  onClose: () => void
+}
+
+/** Inner controlled form — remounted via `key` when popover (re-)opens */
+function LinkForm({
+  initialText,
+  initialHref,
+  isEditing,
+  onSave,
+  onRemove,
+  onClose,
+}: LinkFormProps) {
+  const [text, setText] = useState(initialText)
+  const [href, setHref] = useState(initialHref)
+  const hrefInputRef = useRef<HTMLInputElement>(null)
+  const textInputRef = useRef<HTMLInputElement>(null)
+
+  // Focus on mount (no useEffect + setState needed; state is initialised above)
+  useEffect(() => {
+    setTimeout(() => {
+      if (initialText) {
+        hrefInputRef.current?.focus()
+        hrefInputRef.current?.select()
+      } else {
+        textInputRef.current?.focus()
+      }
+    }, 50)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  function handleSave() {
+    const normalised = normalizeUrl(href)
+    onSave(text.trim(), normalised)
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      handleSave()
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      onClose()
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="text-sm font-medium text-foreground">
+        {isEditing ? 'Edit link' : 'Insert link'}
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="wysiwyg-link-text" className="text-xs">
+          Text
+        </Label>
+        <Input
+          id="wysiwyg-link-text"
+          ref={textInputRef}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Link text"
+          className="h-8 text-sm"
+        />
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="wysiwyg-link-url" className="text-xs">
+          URL
+        </Label>
+        <Input
+          id="wysiwyg-link-url"
+          ref={hrefInputRef}
+          value={href}
+          onChange={(e) => setHref(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="https://example.com"
+          className="h-8 text-sm"
+          type="url"
+          autoComplete="off"
+        />
+      </div>
+
+      <div className="flex items-center gap-2 pt-1">
+        <Button size="sm" className="h-7 text-xs flex-1" onClick={handleSave}>
+          Save
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 text-xs"
+          onClick={onClose}
+        >
+          Cancel
+        </Button>
+        {isEditing && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
+            onClick={onRemove}
+            title="Remove link"
+            aria-label="Remove link"
+          >
+            Unlink
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function LinkPopover({ state, onSave, onRemove, onClose }: LinkPopoverProps) {
+  // Key changes whenever the popover opens or its initial values change,
+  // causing LinkForm to remount with fresh useState initializers — no effect needed.
+  const formKey = `${state.open}|${state.initialText}|${state.initialHref}`
+
+  return (
+    <Popover open={state.open} onOpenChange={(open) => { if (!open) onClose() }}>
+      {/* PopoverAnchor attaches to nothing — we position manually via PopoverContent's
+          side="bottom" and the popover renders portalled to body anyway */}
+      <PopoverAnchor asChild>
+        <span style={{ position: 'absolute', visibility: 'hidden', pointerEvents: 'none' }} />
+      </PopoverAnchor>
+      <PopoverContent
+        className="w-80 p-4"
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        onInteractOutside={onClose}
+      >
+        <LinkForm
+          key={formKey}
+          initialText={state.initialText}
+          initialHref={state.initialHref}
+          isEditing={state.isEditing}
+          onSave={onSave}
+          onRemove={onRemove}
+          onClose={onClose}
+        />
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// ImagePopover — modal-free inline form for inserting/editing images
+// ---------------------------------------------------------------------------
+
+interface ImagePopoverState {
+  open: boolean
+  initialSrc: string
+  initialAlt: string
+  isEditing: boolean
+}
+
+interface ImagePopoverProps {
+  state: ImagePopoverState
+  onSave: (src: string, alt: string) => void
+  onRemove: () => void
+  onClose: () => void
+}
+
+interface ImageFormProps {
+  initialSrc: string
+  initialAlt: string
+  isEditing: boolean
+  onSave: (src: string, alt: string) => void
+  onRemove: () => void
+  onClose: () => void
+}
+
+/** Inner controlled form — remounted via `key` when popover (re-)opens */
+function ImageForm({
+  initialSrc,
+  initialAlt,
+  isEditing,
+  onSave,
+  onRemove,
+  onClose,
+}: ImageFormProps) {
+  const [src, setSrc] = useState(initialSrc)
+  const [alt, setAlt] = useState(initialAlt)
+  const srcInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    setTimeout(() => {
+      srcInputRef.current?.focus()
+      srcInputRef.current?.select()
+    }, 50)
+  }, [])
+
+  function handleSave() {
+    onSave(src.trim(), alt.trim())
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      handleSave()
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      onClose()
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="text-sm font-medium text-foreground">
+        {isEditing ? 'Edit image' : 'Insert image'}
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="wysiwyg-image-src" className="text-xs">
+          Image URL
+        </Label>
+        <Input
+          id="wysiwyg-image-src"
+          ref={srcInputRef}
+          value={src}
+          onChange={(e) => setSrc(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="https://example.com/image.png"
+          className="h-8 text-sm"
+          autoComplete="off"
+        />
+        <p className="text-[10px] text-muted-foreground leading-tight">
+          URL or base64 data: URI
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="wysiwyg-image-alt" className="text-xs">
+          Alt text
+        </Label>
+        <Input
+          id="wysiwyg-image-alt"
+          value={alt}
+          onChange={(e) => setAlt(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Describe the image"
+          className="h-8 text-sm"
+        />
+      </div>
+
+      <div className="flex items-center gap-2 pt-1">
+        <Button size="sm" className="h-7 text-xs flex-1" onClick={handleSave}>
+          Save
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 text-xs"
+          onClick={onClose}
+        >
+          Cancel
+        </Button>
+        {isEditing && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
+            onClick={onRemove}
+            title="Remove image"
+            aria-label="Remove image"
+          >
+            Remove
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ImagePopover({ state, onSave, onRemove, onClose }: ImagePopoverProps) {
+  // Key changes whenever the popover opens or its initial values change,
+  // causing ImageForm to remount with fresh useState initializers — no effect needed.
+  const formKey = `${state.open}|${state.initialSrc}|${state.initialAlt}`
+
+  return (
+    <Popover open={state.open} onOpenChange={(open) => { if (!open) onClose() }}>
+      <PopoverAnchor asChild>
+        <span style={{ position: 'absolute', visibility: 'hidden', pointerEvents: 'none' }} />
+      </PopoverAnchor>
+      <PopoverContent
+        className="w-80 p-4"
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        onInteractOutside={onClose}
+      >
+        <ImageForm
+          key={formKey}
+          initialSrc={state.initialSrc}
+          initialAlt={state.initialAlt}
+          isEditing={state.isEditing}
+          onSave={onSave}
+          onRemove={onRemove}
+          onClose={onClose}
+        />
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // WysiwygEditor
 // ---------------------------------------------------------------------------
 
@@ -479,6 +860,8 @@ export interface WysiwygEditorProps {
   /**
    * When true: no slash menu; pure keyboard surface for inline embedding
    * (e.g. LLM prompt input). Markdown input rules still apply.
+   * Link/Image/Table bubble menus and popovers are still active in minimal
+   * mode — they are useful even when embedding the editor inline.
    */
   minimal?: boolean
 }
@@ -516,13 +899,35 @@ export default function WysiwygEditor({
     setMenuRef.current = setSlashMenu
   })
 
+  // ── Link popover state ─────────────────────────────────────────────────────
+  const [linkPopover, setLinkPopover] = useState<LinkPopoverState>({
+    open: false,
+    initialText: '',
+    initialHref: '',
+    isEditing: false,
+  })
+
+  // Ref for openLinkPopover so it can be called from the slash extension
+  const openLinkRef = useRef<(() => void) | null>(null)
+
+  // ── Image popover state ────────────────────────────────────────────────────
+  const [imagePopover, setImagePopover] = useState<ImagePopoverState>({
+    open: false,
+    initialSrc: '',
+    initialAlt: '',
+    isEditing: false,
+  })
+
+  // Ref for openImagePopover so it can be called from the slash extension
+  const openImageRef = useRef<(() => void) | null>(null)
+
   // ── Slash extension (stable — lazy-initialised with useState) ─────────────
   // useState's lazy initializer runs exactly once (on mount) and never during
   // a re-render. buildSlashExtension stores the ref objects for later access in
   // ProseMirror plugin callbacks (not during render) — disable is correct here.
   // eslint-disable-next-line react-hooks/refs
   const [slashExtension] = useState(() =>
-    buildSlashExtension(setMenuRef, slashHandleRef),
+    buildSlashExtension(setMenuRef, slashHandleRef, openLinkRef, openImageRef),
   )
 
   // ── Extensions ────────────────────────────────────────────────────────────
@@ -547,7 +952,10 @@ export default function WysiwygEditor({
       }),
       TaskItem.configure({ nested: true }),
       Link.configure({
-        openOnClick: !readOnly,
+        // openOnClick opens existing links. In edit mode we disable this so
+        // clicking a link triggers the bubble menu instead. In readOnly mode
+        // links open normally.
+        openOnClick: readOnly,
         HTMLAttributes: {
           class: 'wysiwyg-link',
           rel: 'noopener noreferrer',
@@ -608,6 +1016,64 @@ export default function WysiwygEditor({
     },
   })
 
+  // ── Populate popover opener refs once editor is available ──────────────────
+  // These are stable functions that read the current editor state; they only
+  // need to be recreated when `editor` reference changes (post-mount).
+
+  useLayoutEffect(() => {
+    openLinkRef.current = () => {
+      if (!editor) return
+      const { selection } = editor.state
+      const selectedText = editor.state.doc.textBetween(
+        selection.from,
+        selection.to,
+        '',
+      )
+      const linkAttrs = editor.getAttributes('link') as { href?: string }
+      const isEditing = editor.isActive('link')
+
+      // When editing an existing link with no selection (caret inside),
+      // pre-fill the text by expanding the range to the full link extent.
+      let prefillText = selectedText
+      if (!prefillText && isEditing) {
+        // Use ProseMirror to resolve the mark range and extract text
+        const { $from } = selection
+        const linkMark = $from.marks().find((m) => m.type.name === 'link')
+        if (linkMark) {
+          let from = selection.from
+          let to = selection.from
+          // Walk backwards to find mark start
+          while (from > 0 && editor.state.doc.rangeHasMark(from - 1, from, linkMark.type)) {
+            from--
+          }
+          // Walk forwards to find mark end
+          while (to < editor.state.doc.content.size && editor.state.doc.rangeHasMark(to, to + 1, linkMark.type)) {
+            to++
+          }
+          prefillText = editor.state.doc.textBetween(from, to, '')
+        }
+      }
+
+      setLinkPopover({
+        open: true,
+        initialText: prefillText,
+        initialHref: linkAttrs.href ?? '',
+        isEditing,
+      })
+    }
+
+    openImageRef.current = () => {
+      if (!editor) return
+      const imageAttrs = editor.getAttributes('image') as { src?: string; alt?: string }
+      setImagePopover({
+        open: true,
+        initialSrc: imageAttrs.src ?? '',
+        initialAlt: imageAttrs.alt ?? '',
+        isEditing: editor.isActive('image'),
+      })
+    }
+  })
+
   // ── Sync external value → editor (e.g. doc switch) ────────────────────────
   useEffect(() => {
     if (!editor || suppressExternalSync.current) return
@@ -626,11 +1092,343 @@ export default function WysiwygEditor({
   // ── Close slash menu ──────────────────────────────────────────────────────
   const handleClose = useCallback(() => setSlashMenu(null), [])
 
+  // ── Link popover handlers ─────────────────────────────────────────────────
+
+  const handleLinkSave = useCallback(
+    (text: string, href: string) => {
+      if (!editor) return
+      setLinkPopover((s) => ({ ...s, open: false }))
+      // Empty URL = remove link / nothing
+      if (!href) {
+        editor.chain().focus().unsetLink().run()
+        return
+      }
+      if (text) {
+        // Insert or replace selected text as a link
+        const { selection } = editor.state
+        const hasSelection = selection.from !== selection.to
+
+        if (hasSelection) {
+          // Wrap selection in link mark (text replaced by whatever user typed in the field)
+          editor
+            .chain()
+            .focus()
+            .deleteSelection()
+            .insertContent({
+              type: 'text',
+              text,
+              marks: [{ type: 'link', attrs: { href } }],
+            })
+            .run()
+        } else if (editor.isActive('link')) {
+          // Caret is inside existing link — update href (and optionally text)
+          // First expand selection to cover the whole link, then replace
+          editor
+            .chain()
+            .focus()
+            .extendMarkRange('link')
+            .deleteSelection()
+            .insertContent({
+              type: 'text',
+              text,
+              marks: [{ type: 'link', attrs: { href } }],
+            })
+            .run()
+        } else {
+          // No selection, not inside a link — insert new linked text at cursor
+          editor
+            .chain()
+            .focus()
+            .insertContent({
+              type: 'text',
+              text,
+              marks: [{ type: 'link', attrs: { href } }],
+            })
+            .run()
+        }
+      } else {
+        // No text — just apply link mark to existing selection / position
+        editor.chain().focus().extendMarkRange('link').setLink({ href }).run()
+      }
+    },
+    [editor],
+  )
+
+  const handleLinkRemove = useCallback(() => {
+    setLinkPopover((s) => ({ ...s, open: false }))
+    editor?.chain().focus().extendMarkRange('link').unsetLink().run()
+  }, [editor])
+
+  const handleLinkClose = useCallback(() => {
+    setLinkPopover((s) => ({ ...s, open: false }))
+  }, [])
+
+  // ── Image popover handlers ────────────────────────────────────────────────
+
+  const handleImageSave = useCallback(
+    (src: string, alt: string) => {
+      if (!editor) return
+      setImagePopover((s) => ({ ...s, open: false }))
+      if (!src) return
+      if (editor.isActive('image')) {
+        // Update existing image node
+        editor.chain().focus().updateAttributes('image', { src, alt }).run()
+      } else {
+        editor.chain().focus().setImage({ src, alt }).run()
+      }
+    },
+    [editor],
+  )
+
+  const handleImageRemove = useCallback(() => {
+    setImagePopover((s) => ({ ...s, open: false }))
+    if (!editor) return
+    // Delete the selected image node
+    editor.chain().focus().deleteSelection().run()
+  }, [editor])
+
+  const handleImageClose = useCallback(() => {
+    setImagePopover((s) => ({ ...s, open: false }))
+  }, [])
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className={cn('wysiwyg-root relative', dark && 'dark', className)}>
       <EditorContent editor={editor} />
 
+      {/* ── Link bubble toolbar ────────────────────────────────────────────
+          Shows when the caret is inside a link mark.
+          shouldShow: link is active AND image is NOT selected (avoid collision).
+          Implementation: BubbleMenu from @tiptap/react/menus — it uses
+          @floating-ui/dom (already a transitive dep) for positioning.
+      */}
+      {editor && !readOnly && (
+        <BubbleMenu
+          editor={editor}
+          pluginKey="linkBubble"
+          options={{ placement: 'bottom' }}
+          shouldShow={({ editor: e }) =>
+            e.isActive('link') && !e.isActive('image')
+          }
+        >
+          <div className="wysiwyg-bubble-toolbar">
+            {/* Truncated URL display */}
+            {(() => {
+              const href = (editor.getAttributes('link') as { href?: string }).href ?? ''
+              const display =
+                href.length > 40 ? href.slice(0, 38) + '…' : href
+              return (
+                <span
+                  className="text-[11px] text-muted-foreground max-w-[140px] truncate shrink"
+                  title={href}
+                >
+                  {display}
+                </span>
+              )
+            })()}
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-6 w-6 shrink-0"
+              title="Open link in new tab"
+              aria-label="Open link in new tab"
+              onClick={() => {
+                const href = (editor.getAttributes('link') as { href?: string }).href
+                if (href) window.open(href, '_blank', 'noopener,noreferrer')
+              }}
+            >
+              <ExternalLinkIcon className="h-3 w-3" />
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-6 w-6 shrink-0"
+              title="Edit link"
+              aria-label="Edit link"
+              onClick={() => {
+                openLinkRef.current?.()
+              }}
+            >
+              <PencilIcon className="h-3 w-3" />
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-6 w-6 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+              title="Remove link"
+              aria-label="Remove link"
+              onClick={() => {
+                editor.chain().focus().extendMarkRange('link').unsetLink().run()
+              }}
+            >
+              <UnlinkIcon className="h-3 w-3" />
+            </Button>
+          </div>
+        </BubbleMenu>
+      )}
+
+      {/* ── Image bubble toolbar ───────────────────────────────────────────
+          Shows when an image node is selected.
+          The link bubble already excludes images (shouldShow: !e.isActive('image')),
+          so no additional gate is needed here.
+      */}
+      {editor && !readOnly && (
+        <BubbleMenu
+          editor={editor}
+          pluginKey="imageBubble"
+          options={{ placement: 'bottom' }}
+          shouldShow={({ editor: e }) => e.isActive('image')}
+        >
+          <div className="wysiwyg-bubble-toolbar">
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-6 w-6 shrink-0"
+              title="Edit image"
+              aria-label="Edit image"
+              onClick={() => {
+                openImageRef.current?.()
+              }}
+            >
+              <PencilIcon className="h-3 w-3" />
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-6 w-6 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+              title="Remove image"
+              aria-label="Remove image"
+              onClick={() => {
+                editor.chain().focus().deleteSelection().run()
+              }}
+            >
+              <Trash2Icon className="h-3 w-3" />
+            </Button>
+          </div>
+        </BubbleMenu>
+      )}
+
+      {/* ── Table bubble toolbar ──────────────────────────────────────────
+          Shows when the caret is inside a table node.
+          shouldShow: table is active AND link/image are NOT active
+          (so table controls don't overlap link/image toolbars).
+      */}
+      {editor && !readOnly && (
+        <BubbleMenu
+          editor={editor}
+          pluginKey="tableBubble"
+          options={{ placement: 'top' }}
+          shouldShow={({ editor: e }) =>
+            e.isActive('table') && !e.isActive('link') && !e.isActive('image')
+          }
+        >
+          <div className="wysiwyg-bubble-toolbar flex-wrap gap-y-1">
+            {/* Row operations */}
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-6 w-6 shrink-0"
+              title="Add row above"
+              aria-label="Add row above"
+              onClick={() => editor.chain().focus().addRowBefore().run()}
+            >
+              {/* Row + up: use a stacked icon approach */}
+              <span className="flex flex-col items-center gap-0 leading-none">
+                <PlusIcon className="h-2 w-2" />
+                <RowsIcon className="h-2.5 w-2.5" />
+              </span>
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-6 w-6 shrink-0"
+              title="Add row below"
+              aria-label="Add row below"
+              onClick={() => editor.chain().focus().addRowAfter().run()}
+            >
+              <span className="flex flex-col items-center gap-0 leading-none">
+                <RowsIcon className="h-2.5 w-2.5" />
+                <PlusIcon className="h-2 w-2" />
+              </span>
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-6 w-6 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+              title="Delete row"
+              aria-label="Delete row"
+              onClick={() => editor.chain().focus().deleteRow().run()}
+            >
+              <span className="flex flex-col items-center gap-0 leading-none">
+                <RowsIcon className="h-2.5 w-2.5" />
+                <MinusIcon className="h-2 w-2" />
+              </span>
+            </Button>
+
+            <div className="wysiwyg-bubble-sep" />
+
+            {/* Column operations */}
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-6 w-6 shrink-0"
+              title="Add column before"
+              aria-label="Add column before"
+              onClick={() => editor.chain().focus().addColumnBefore().run()}
+            >
+              <span className="flex flex-row items-center gap-0 leading-none">
+                <PlusIcon className="h-2 w-2" />
+                <Columns3Icon className="h-2.5 w-2.5" />
+              </span>
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-6 w-6 shrink-0"
+              title="Add column after"
+              aria-label="Add column after"
+              onClick={() => editor.chain().focus().addColumnAfter().run()}
+            >
+              <span className="flex flex-row items-center gap-0 leading-none">
+                <Columns3Icon className="h-2.5 w-2.5" />
+                <PlusIcon className="h-2 w-2" />
+              </span>
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-6 w-6 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+              title="Delete column"
+              aria-label="Delete column"
+              onClick={() => editor.chain().focus().deleteColumn().run()}
+            >
+              <span className="flex flex-row items-center gap-0 leading-none">
+                <Columns3Icon className="h-2.5 w-2.5" />
+                <MinusIcon className="h-2 w-2" />
+              </span>
+            </Button>
+
+            <div className="wysiwyg-bubble-sep" />
+
+            {/* Delete whole table */}
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-6 w-6 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+              title="Delete table"
+              aria-label="Delete table"
+              onClick={() => editor.chain().focus().deleteTable().run()}
+            >
+              <span className="flex flex-row items-center gap-0 leading-none">
+                <TableIcon className="h-2.5 w-2.5" />
+                <MinusIcon className="h-2 w-2" />
+              </span>
+            </Button>
+          </div>
+        </BubbleMenu>
+      )}
+
+      {/* ── Slash menu portal ─────────────────────────────────────────────── */}
       {!minimal && slashMenu && (
         <SlashMenuPortal
           items={slashMenu.items}
@@ -641,6 +1439,22 @@ export default function WysiwygEditor({
           onClose={handleClose}
         />
       )}
+
+      {/* ── Link popover form ─────────────────────────────────────────────── */}
+      <LinkPopover
+        state={linkPopover}
+        onSave={handleLinkSave}
+        onRemove={handleLinkRemove}
+        onClose={handleLinkClose}
+      />
+
+      {/* ── Image popover form ────────────────────────────────────────────── */}
+      <ImagePopover
+        state={imagePopover}
+        onSave={handleImageSave}
+        onRemove={handleImageRemove}
+        onClose={handleImageClose}
+      />
     </div>
   )
 }

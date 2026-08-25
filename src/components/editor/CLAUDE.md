@@ -10,7 +10,9 @@ These are hand-rolled app components — **not** shadcn/ui (which lives in `src/
 |---|---|---|
 | `CodeEditor.tsx` | `<CodeEditor>` | CodeMirror 6 editor — multi-language, themed, dark-aware |
 | `MarkdownRenderer.tsx` | `<MarkdownRenderer>` | react-markdown renderer — full element coverage, syntax-highlighted code blocks |
-| `WysiwygEditor.tsx` | `<WysiwygEditor>` | TipTap WYSIWYG editor — markdown in / markdown out, slash menu, tables, task lists |
+| `WysiwygEditor.tsx` | `<WysiwygEditor>` | TipTap WYSIWYG editor — markdown in / markdown out, slash menu, bubble menus, tables, task lists |
+| `wysiwyg-utils.ts` | — | Pure helpers for WysiwygEditor — `normalizeUrl()` and future utils |
+| `wysiwyg-utils.test.ts` | — | Vitest unit tests for `wysiwyg-utils.ts` |
 
 ---
 
@@ -83,6 +85,16 @@ A TipTap (ProseMirror) WYSIWYG editor with markdown as the single source of trut
 Tracks dark mode internally. Can be embedded standalone — safe to use without the
 full VME tool page.
 
+### Dependencies
+
+- **shadcn/ui**: `popover`, `input`, `button`, `label` — required for the link/image
+  popover forms. All must be present in `src/components/ui/`.
+- **@tiptap/react/menus**: `BubbleMenu` component — for link, image, and table
+  context toolbars. Ships with `@tiptap/react` v3 (no extra install needed).
+- **@tiptap/extension-bubble-menu**: underlying plugin (transitive dep of @tiptap/react).
+- **@floating-ui/dom**: positioning library used by BubbleMenu v3 (transitive dep of
+  @tiptap/extension-bubble-menu — no extra install needed).
+
 ```tsx
 import WysiwygEditor from '@/components/editor/WysiwygEditor'
 
@@ -128,12 +140,107 @@ import WysiwygEditor from '@/components/editor/WysiwygEditor'
   calls `setContent(value, { emitUpdate: false })` without triggering `onChange`, so the
   cursor position resets cleanly. A suppress-flag prevents the round-trip loop.
 - **minimal=true use case**: inline embedding for LLM prompt inputs. No slash menu popup;
-  markdown input rules and full keyboard editing still work.
+  link/image/table bubble menus still work; markdown input rules and full keyboard
+  editing still work.
+
+---
+
+### Link editing
+
+The link interaction model is entirely mouse-driven (no `window.prompt`):
+
+1. **Inserting a new link (no selection):** type `/link` in the slash menu and press
+   Enter — a popover form appears with **Text** and **URL** fields. Type the text and URL,
+   press Enter or click Save. The text is inserted at the cursor as a hyperlink.
+
+2. **Inserting a link over a selection:** select text first, then type `/link`. The
+   **Text** field is prefilled from the selection. Enter a URL and Save to wrap the
+   selected text in a link.
+
+3. **Editing an existing link:** click inside any existing link or place the caret
+   inside it. A **bubble toolbar** appears below the link showing:
+   - The truncated URL
+   - **Open** button (opens URL in new tab)
+   - **Edit** button (opens the popover prefilled with current text + href)
+   - **Unlink** button (removes the link mark, leaves text)
+
+4. **URL normalisation** (`normalizeUrl()` in `wysiwyg-utils.ts`):
+   - Trims whitespace.
+   - Empty → no-op (treated as "remove link").
+   - Leaves `#anchor`, `/path`, `./rel`, `../up` unchanged.
+   - Leaves `https://`, `mailto:`, `tel:`, `data:`, `ftp://`, etc. unchanged.
+   - Prepends `https://` to bare domains and `host:port` URLs.
+   - Blocks `javascript:` and `vbscript:` (returns `''`).
+
+---
+
+### Image editing
+
+The image interaction model is entirely mouse-driven (no `window.prompt`):
+
+1. **Inserting a new image:** type `/image` in the slash menu — a popover form appears
+   with **Image URL** and **Alt text** fields. Accepts HTTPS URLs *and* base64 `data:`
+   URIs (for local/pasted images).
+
+2. **Editing an existing image:** click the image to select it. A **bubble toolbar**
+   appears below with:
+   - **Edit** button (reopens the popover prefilled with current src + alt)
+   - **Remove** button (deletes the image node)
+
+---
+
+### Table editing
+
+Table keyboard shortcuts remain unchanged (Tab / Shift-Tab / Enter).  
+A **bubble toolbar** also appears above any table when the cursor is inside it:
+
+| Button | Action |
+|---|---|
+| Add row above | `addRowBefore()` |
+| Add row below | `addRowAfter()` |
+| Delete row | `deleteRow()` |
+| Add column before | `addColumnBefore()` |
+| Add column after | `addColumnAfter()` |
+| Delete column | `deleteColumn()` |
+| Delete table | `deleteTable()` |
+
+All buttons carry `title` and `aria-label` tooltips.
+
+---
+
+### Bubble menu implementation notes
+
+TipTap v3's `BubbleMenu` (from `@tiptap/react/menus`) uses **@floating-ui/dom** for
+positioning — not Tippy.js. The prop is `options={{ placement: 'bottom' }}` (not
+`tippyOptions`).
+
+Three `BubbleMenu` instances are registered; they gate each other via `shouldShow`:
+
+| Bubble | shouldShow condition |
+|---|---|
+| `linkBubble` | `e.isActive('link') && !e.isActive('image')` |
+| `imageBubble` | `e.isActive('image')` |
+| `tableBubble` | `e.isActive('table') && !e.isActive('link') && !e.isActive('image')` |
+
+This ensures only one bubble menu is ever visible at a time.
+
+The link/image **popover forms** (shadcn `Popover`) are rendered separately from the
+bubble toolbars — they are portalled to `<body>` by Radix UI's `PopoverPortal`.
+The `PopoverAnchor` is a hidden `position:absolute` span that lets the popover open
+without a visible trigger element. Because the popover content is portalled to body,
+it naturally layers above the editor and the BubbleMenu toolbars.
+
+Inner form components (`LinkForm`, `ImageForm`) are remounted via a `key` prop
+whenever the popover (re-)opens — this resets `useState` initializers cleanly without
+needing a `useEffect + setState` pattern (which would trigger the
+`react-hooks/set-state-in-effect` lint rule).
+
+---
 
 ### Embedding as a standalone prompt input (minimal mode)
 
 ```tsx
-// Inline LLM prompt textarea — keyboard-only, no chrome
+// Inline LLM prompt textarea — keyboard-only, no slash menu
 <WysiwygEditor
   value={prompt}
   onChange={setPrompt}
@@ -142,6 +249,8 @@ import WysiwygEditor from '@/components/editor/WysiwygEditor'
   className="border border-input rounded-md bg-background"
 />
 ```
+
+---
 
 ### Markdown serializer choice
 

@@ -1,6 +1,7 @@
 # src/components/editor — CLAUDE.md
 
-Shared, reusable editor components for tools that need code editing or markdown rendering.
+Shared, reusable editor components for tools that need code editing, markdown
+rendering, or WYSIWYG editing.
 These are hand-rolled app components — **not** shadcn/ui (which lives in `src/components/ui/`).
 
 ## Files
@@ -9,6 +10,7 @@ These are hand-rolled app components — **not** shadcn/ui (which lives in `src/
 |---|---|---|
 | `CodeEditor.tsx` | `<CodeEditor>` | CodeMirror 6 editor — multi-language, themed, dark-aware |
 | `MarkdownRenderer.tsx` | `<MarkdownRenderer>` | react-markdown renderer — full element coverage, syntax-highlighted code blocks |
+| `WysiwygEditor.tsx` | `<WysiwygEditor>` | TipTap WYSIWYG editor — markdown in / markdown out, slash menu, tables, task lists |
 
 ---
 
@@ -75,6 +77,80 @@ import MarkdownRenderer from '@/components/editor/MarkdownRenderer'
 
 ---
 
+## WysiwygEditor
+
+A TipTap (ProseMirror) WYSIWYG editor with markdown as the single source of truth.
+Tracks dark mode internally. Can be embedded standalone — safe to use without the
+full VME tool page.
+
+```tsx
+import WysiwygEditor from '@/components/editor/WysiwygEditor'
+
+<WysiwygEditor
+  value={markdownString}
+  onChange={(md) => setContent(md)}   // called on every edit
+  placeholder="Start writing…"
+  readOnly={false}
+  className="h-full"
+  minimal={false}                     // see below
+/>
+```
+
+### Props
+
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| `value` | `string` | — | **Required.** Markdown string — the single source of truth. |
+| `onChange` | `(md: string) => void` | — | Called with new markdown on every edit. |
+| `placeholder` | `string` | `'Start writing… (type / for commands)'` | Placeholder text when empty. |
+| `readOnly` | `boolean` | `false` | Disables editing. |
+| `className` | `string` | — | Extra wrapper classes. |
+| `minimal` | `boolean` | `false` | No slash menu — pure keyboard surface for inline embedding. |
+
+### Key notes
+
+- **Markdown round-trip**: `value` is parsed → ProseMirror doc on mount / external value
+  change; the doc is serialised → markdown on every edit via `tiptap-markdown`.
+- **GFM support**: headings H1-H6, paragraph, bold, italic, strikethrough, inline code,
+  links, blockquote, fenced code blocks with language, bullet/ordered/task lists,
+  tables, horizontal rule, images.
+- **Markdown input rules** auto-convert as you type: `# `…`###### ` headings, `- `/`* `
+  bullet list, `1. ` ordered list, `[ ] `/`[x] ` task list, `> ` blockquote,
+  ` ``` ` fenced code block, `---` horizontal rule, plus inline `**bold**`, `*italic*`,
+  `~~strike~~`, `` `code` ``.
+- **Slash menu** (when `minimal=false`): type `/` to open a command palette. Arrow keys
+  navigate, Enter selects, Escape closes. Supports all block and inline components.
+- **Table keyboard UX**: Tab/Shift-Tab move between cells; Enter adds a new row when on
+  the last cell of the last row.
+- **Dark mode**: tracked via `MutationObserver` on `document.documentElement.classList` —
+  same pattern as `CodeEditor` and `MarkdownRenderer`.
+- **External value sync**: when the `value` prop changes (e.g. doc switch), the editor
+  calls `setContent(value, { emitUpdate: false })` without triggering `onChange`, so the
+  cursor position resets cleanly. A suppress-flag prevents the round-trip loop.
+- **minimal=true use case**: inline embedding for LLM prompt inputs. No slash menu popup;
+  markdown input rules and full keyboard editing still work.
+
+### Embedding as a standalone prompt input (minimal mode)
+
+```tsx
+// Inline LLM prompt textarea — keyboard-only, no chrome
+<WysiwygEditor
+  value={prompt}
+  onChange={setPrompt}
+  minimal={true}
+  placeholder="Describe what you want…"
+  className="border border-input rounded-md bg-background"
+/>
+```
+
+### Markdown serializer choice
+
+Uses `tiptap-markdown` (v0.9.x) which targets Tiptap v3.
+If it becomes unmaintained, the fallback is `prosemirror-markdown`'s
+`defaultMarkdownSerializer` wrapped in a custom Tiptap extension.
+
+---
+
 ## Adding a new language
 
 **CodeEditor:** add to `LANG_EXTENSIONS` map in `CodeEditor.tsx`.
@@ -83,3 +159,7 @@ Install the `@codemirror/lang-*` package first (`npm info` for latest version).
 **MarkdownRenderer:** add to `SUPPORTED_LANGUAGES` set and register with
 `SyntaxHighlighter.registerLanguage(...)` at the top of `MarkdownRenderer.tsx`.
 Import the language from `react-syntax-highlighter/dist/esm/languages/prism/<name>`.
+
+**WysiwygEditor:** no additional configuration — code blocks render as `<pre>` with
+a `wysiwyg-code-block` CSS class. Syntax highlighting in the WYSIWYG view is not
+currently implemented (by design — focus is on markdown fidelity, not live highlighting).

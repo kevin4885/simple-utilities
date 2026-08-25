@@ -147,6 +147,7 @@ export default function LlanoCastellPage() {
     return () => clearInterval(id)
   }, [])
 
+  // eslint-disable-next-line react-hooks/purity
   const now = Date.now()
   const year = activeTripYear(now)
   const tw = tripWindow(year)
@@ -171,6 +172,7 @@ export default function LlanoCastellPage() {
           latestMason.value,
           latestLlano.value,
           mason,
+          // eslint-disable-next-line react-hooks/purity
           fetchedAtMs || Date.now(),
         )
       : null
@@ -189,6 +191,7 @@ export default function LlanoCastellPage() {
           latestMason.value,
           latestLlano.value,
           masonMrc,
+          // eslint-disable-next-line react-hooks/purity
           fetchedAtMs || Date.now(),
           tripDates,
           masonRatingCurve,

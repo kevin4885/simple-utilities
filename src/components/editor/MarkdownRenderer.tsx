@@ -78,7 +78,8 @@ function makeMdComponents(dark: boolean, onCopy: (code: string) => void) {
     },
 
     // Links always open in a new tab
-    a({ node: _n, href, children, ...props }:
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    a({ node: _node, href, children, ...props }:
         React.ComponentPropsWithoutRef<'a'> & { node?: unknown }) {
       return (
         <a
@@ -94,7 +95,8 @@ function makeMdComponents(dark: boolean, onCopy: (code: string) => void) {
     },
 
     // Three code cases — see module JSDoc for detection logic
-    code({ className, children, node: _n, ...props }:
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    code({ className, children, node: _codeNode, ...props }:
            React.ComponentPropsWithoutRef<'code'> & { node?: unknown }) {
       const match        = /language-(\w+)/.exec(className ?? '')
       const detectedLang = match ? match[1] : ''

@@ -365,6 +365,7 @@ function InlineTitle({ title, onRename }: InlineTitleProps) {
   const inputRef = useRef<HTMLInputElement>(null)
 
   function startEdit() {
+    // Refresh value from current title prop when entering edit mode
     setValue(title)
     setEditing(true)
     setTimeout(() => { inputRef.current?.select() }, 0)
@@ -375,11 +376,6 @@ function InlineTitle({ title, onRename }: InlineTitleProps) {
     if (trimmed) onRename(trimmed)
     setEditing(false)
   }
-
-  // Keep value in sync if title changes externally (e.g. doc switch)
-  useEffect(() => {
-    if (!editing) setValue(title)
-  }, [title, editing])
 
   if (editing) {
     return (

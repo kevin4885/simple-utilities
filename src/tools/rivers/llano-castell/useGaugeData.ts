@@ -118,6 +118,7 @@ export function useGaugeData(): UseGaugeDataResult {
 
   // Fetch on mount and on TTL tick
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void doFetch()
     intervalRef.current = setInterval(() => void doFetch(), CACHE_TTL_MS)
     return () => {
@@ -126,6 +127,7 @@ export function useGaugeData(): UseGaugeDataResult {
     }
   }, [doFetch])
 
+  // eslint-disable-next-line react-hooks/purity
   const isStale = fetchedAtMs > 0 && Date.now() - fetchedAtMs > STALE_WARN_MS
 
   return {

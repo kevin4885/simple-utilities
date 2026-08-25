@@ -246,11 +246,11 @@ export default function ColorConverterPage() {
   // Confirm dialog state — holds the raw value the user tried to navigate to
   const [confirmPending, setConfirmPending] = useState<string | null>(null)
 
-  // Sync on first load
+  // Sync on first load — initialises from restored localStorage value.
   useEffect(() => {
     const res = parseColor(inputValue)
     if (res) {
-      setColor(res.color)
+      setColor(res.color) // eslint-disable-line react-hooks/set-state-in-effect
       setCommittedColor(res.color)
       setDetectedFormat(res.format)
       setInputError(false)

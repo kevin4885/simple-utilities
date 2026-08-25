@@ -100,7 +100,7 @@
 
   --destructive:            oklch(0.6560 0.2410 354.3);
 
-  --border:                 oklch(0.177 0.032 264.5);    /* same as background   */
+  --border:                 oklch(0.3195 0.0432 263.7);  /* visible against bg + card */
   --input:                  oklch(0.3195 0.0432 263.7);
   --ring:                   oklch(0.7574 0.1398 85.8);   /* gold                 */
 
@@ -300,9 +300,9 @@
 
 /* ── Native scrollbars — match shadcn ScrollArea appearance ────── */
 /* Mirrors: w-2.5 track, p-px padding, bg-border rounded-full thumb */
-/* Dark mode uses --muted-foreground instead of --border because     */
-/* this theme sets --border === --background in dark mode, which     */
-/* would make the thumb invisible.                                   */
+/* Dark mode intentionally uses --muted-foreground for a more visible */
+/* thumb; --border is a subtle hairline meant for separators/edges.   */
+/* (Both tokens are now distinct from --background.)                  */
 @layer base {
   /* Firefox */
   * {

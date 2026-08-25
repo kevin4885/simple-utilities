@@ -79,20 +79,23 @@ The full token set is the source of truth in `src/index.css`.
 
 Theme choice is stored in localStorage under key `su:theme`.
 
-### Dark-mode border gotcha (`--border` vs `--input`)
+### Dark-mode borders (`--border` vs `--input`)
 
-In dark mode this theme intentionally sets `--border` **equal to** `--background` — structural
-borders (panel dividers, card outlines) disappear and contrast comes from surface colors
-(`bg-card`, `bg-muted/40`) instead. `--input` remains a visible lighter tone in dark mode.
+In dark mode `--border` is a **subtle hairline** tone (distinct from both `--background` and
+`--card`) so structural borders — panel dividers, card outlines, `<hr>`, table cell borders —
+stay visible. `--input` is a slightly lighter tone used for form-control outlines. Both are
+visible in light and dark mode.
 
-Consequence — **form controls must never use `border-border`**, or they become invisible in
-dark mode:
+> History: `--border` used to equal `--background` in dark mode (borders were intentionally
+> invisible, with contrast coming from surface colors). That made borders vanish app-wide in
+> dark mode, so `--border` was given its own visible value. If you see old code that avoided
+> `border-border` to dodge that bug, it can now safely use it.
 
-- Prefer the shadcn `Input` / `Textarea` components from `src/components/ui/` (they use
-  `border-input` and dark-mode `bg-input/30` correctly, plus `aria-invalid` styling for errors).
-- If you must hand-roll a control, use `border-input`, never `border-border`.
-- `border-border` is fine for structural separators where invisibility in dark mode is the
-  intended design.
+Guidance:
+- Use `border-border` for structural separators, card/panel outlines, dividers, and rules.
+- Use `border-input` (or the shadcn `Input` / `Textarea` components) for form controls — they
+  also carry `bg-input/30` and `aria-invalid` styling.
+- Never hardcode raw colors; always use the semantic token utilities.
 
 ## shadcn/ui components
 
@@ -193,8 +196,8 @@ Scrollbars are globally styled in `src/index.css` to match the shadcn `ScrollAre
 
 Token mapping:
 - **Light:** thumb = `var(--border)`
-- **Dark:** thumb = `var(--muted-foreground)` — `var(--border)` equals `var(--background)` in dark
-  mode (intentional design choice), so it would be invisible.
+- **Dark:** thumb = `var(--muted-foreground)` — a deliberately higher-contrast thumb than
+  the subtle `var(--border)` hairline used elsewhere.
 
 Do not add per-component `::-webkit-scrollbar` overrides — the global rules cover everything
 including CodeMirror's scroller, preview panes, sidebars, and the ToolPage scroll wrapper.

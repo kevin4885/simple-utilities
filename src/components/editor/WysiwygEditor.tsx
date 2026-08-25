@@ -532,6 +532,11 @@ export default function WysiwygEditor({
         // In Tiptap v3 the undo/redo extension is 'undoRedo', not 'history'
         undoRedo: { depth: 200 },
         codeBlock: { HTMLAttributes: { class: 'wysiwyg-code-block' } },
+        // Disable StarterKit's bundled Link so we can configure it below
+        // with our own HTMLAttributes (class, rel, target) and openOnClick.
+        // StarterKit v3 bundles Link by default; omitting link:false causes
+        // a duplicate-name warning and the configured options being dropped.
+        link: false,
       }),
       Table.configure({ resizable: false }),
       TableRow,

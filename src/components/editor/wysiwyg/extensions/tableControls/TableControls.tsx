@@ -69,6 +69,7 @@ import {
   isRectangularTable,
 } from './commands'
 import { TableMap } from '@tiptap/pm/tables'
+import { getScrollParent } from '../../utils'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -197,7 +198,7 @@ export function TableControls({ editor }: TableControlsProps) {
 
   // Re-measure on scroll and resize — setState called inside event callbacks
   useEffect(() => {
-    const scrollContainer = editor.view.dom.closest('.overflow-y-auto') as HTMLElement | null
+    const scrollContainer = getScrollParent(editor.view.dom) as HTMLElement | null
     const target = scrollContainer ?? editor.view.dom.parentElement
 
     const onScroll = () => {
@@ -322,8 +323,9 @@ export function TableControls({ editor }: TableControlsProps) {
 
   return (
     <div
+      data-wysiwyg-table-controls
       className="pointer-events-none absolute inset-0 overflow-visible"
-      style={{ zIndex: 20 }}
+      style={{ zIndex: 10 }}
     >
       {/* ── Row handle ─────────────────────────────────────────────────── */}
       {showRowHandle && rowHandleRect && (

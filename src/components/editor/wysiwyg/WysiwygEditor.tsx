@@ -87,6 +87,7 @@ import { Toolbar } from './toolbar/Toolbar'
 import { TOOLBAR_CONFIG } from './toolbar/config'
 import type { ToolbarConfig } from './toolbar/config'
 import { isImageFile, fileToDataUri } from './forms/imageFile'
+import { sanitizeImageSrc } from './utils'
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -170,6 +171,21 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
     const openImageRef = useRef<(() => void) | null>(null)
     const openTableRef = useRef<(() => void) | null>(null)
 
+    // ── Prop refs — read inside extension callbacks so extensions are stable ─
+    // readOnly: consumed by Link.configure(openOnClick) but we apply it via
+    //           editor.setEditable() in a useEffect instead, so the extension
+    //           config never needs to change.
+    // placeholder: TipTap's Placeholder extension reads it via extension.options
+    //              which can be updated after mount; we hold a ref and apply
+    //              updates via editor.extensionManager where needed.
+    //              For now both are kept OUT of the useMemo deps so the editor
+    //              is never recreated when readOnly/placeholder change.
+    const readOnlyRef = useRef(readOnly)
+    const placeholderRef = useRef(placeholder)
+    // Keep refs in sync (layout effect = before paint, same as the value sync)
+    useLayoutEffect(() => { readOnlyRef.current = readOnly })
+    useLayoutEffect(() => { placeholderRef.current = placeholder })
+
     // ── Stable extensions ──────────────────────────────────────────────────
     const [slashExtension] = useState(() =>
       buildSlashExtension(setMenuRef, slashHandleRef, openLinkRef, openImageRef, openTableRef),
@@ -195,7 +211,16 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
         }),
         TaskItem.configure({ nested: true }),
         Link.configure({
-          openOnClick: readOnly,
+          // openOnClick: links open on click only in readOnly mode.
+          // We deliberately pin this to the mount-time value (readOnlyRef.current)
+          // rather than re-creating the editor when readOnly changes.
+          // TipTap's Link extension does not expose a runtime API to update
+          // openOnClick after mount; rebuilding extensions on readOnly toggle
+          // would destroy undo history and lose the current selection, which is
+          // worse than the alternative.
+          // In practice: VME always mounts WysiwygEditor with readOnly=false;
+          // the readOnly path is only used in potential future embed scenarios.
+          openOnClick: readOnlyRef.current,
           // autolink: typing "https://example.com " auto-converts the URL to a
           // link mark; linkOnPaste: pasting a URL over a selection links it.
           // Both are safe to enable alongside tiptap-markdown because the
@@ -219,7 +244,7 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
           allowBase64: true,
           HTMLAttributes: { class: 'wysiwyg-image max-w-full rounded' },
         }),
-        Placeholder.configure({ placeholder }),
+        Placeholder.configure({ placeholder: placeholderRef.current }),
         Markdown.configure({
           html: false,
           tightLists: true,
@@ -233,10 +258,14 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
         tableControlsExtension,
         ...(minimal ? [] : [slashExtension]),
       ],
-      // Include all values read inside the memo so hot-reloading and test
-      // rerenders don't silently stale-close over old prop values.
+      // Only rebuild extensions when `minimal` changes (which changes the
+      // structural extension array). readOnly and placeholder are consumed via
+      // refs and applied as side-effects (editor.setEditable, extension options)
+      // so they must NOT be in this dep array — rebuilding on readOnly/placeholder
+      // change would destroy and recreate the editor, wiping undo history and
+      // losing the current selection.
       // eslint-disable-next-line react-hooks/exhaustive-deps
-      [minimal, readOnly, placeholder],
+      [minimal],
     )
 
     // ── Debounce refs ──────────────────────────────────────────────────────
@@ -301,7 +330,9 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
               event.preventDefault()
               fileToDataUri(file).then((dataUri) => {
                 if (!editor || editor.isDestroyed) return
-                editor.chain().focus().setImage({ src: dataUri, alt: '' }).run()
+                const safeSrc = sanitizeImageSrc(dataUri)
+                if (!safeSrc) return
+                editor.chain().focus().setImage({ src: safeSrc, alt: '' }).run()
               })
               return true
             }
@@ -316,7 +347,9 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
           event.preventDefault()
           fileToDataUri(imageFile).then((dataUri) => {
             if (!editor || editor.isDestroyed) return
-            editor.chain().focus().setImage({ src: dataUri, alt: '' }).run()
+            const safeSrc = sanitizeImageSrc(dataUri)
+            if (!safeSrc) return
+            editor.chain().focus().setImage({ src: safeSrc, alt: '' }).run()
           })
           return true
         },
@@ -438,7 +471,7 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
         <div className={cn('wysiwyg-root relative flex flex-col', dark && 'dark', className)}>
           {/* Sticky formatting toolbar */}
           {editor && !readOnly && resolvedToolbarConfig && (
-            <div className="sticky top-0 z-10">
+            <div className="sticky top-0 z-20">
               <Toolbar
                 editor={editor}
                 config={resolvedToolbarConfig}

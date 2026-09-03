@@ -18,7 +18,7 @@
  *   'markdown', and shows a brief inline notice.
  *
  * Keyboard shortcuts:
- *   Ctrl+Shift+P / Cmd+Shift+P — toggles between current editing mode and 'preview'
+ *   Ctrl+Alt+P / Cmd+Alt+P — toggles between current editing mode and 'preview'
  *   (remembers previous mode to return to).
  *
  * Layout:
@@ -95,8 +95,7 @@ import {
   countChars,
   countLines,
   toSafeFilename,
-  KEYBOARD_SHORTCUTS,
-} from './logic'
+  KEYBOARD_SHORTCUTS, EDITOR_MODES } from './logic'
 import { useVmeStore, type VmeDoc, type VmeModel, type VmeEditorMode } from './store'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -613,12 +612,17 @@ export default function VisualMarkdownEditorPage() {
     URL.revokeObjectURL(url)
   }
 
-  // ── Ctrl+Shift+P / Cmd+Shift+P — toggle preview ────────────────────────────
+  // ── Ctrl+Alt+P / Cmd+Alt+P — toggle preview ────────────────────────────────
+  //
+  // Ctrl+Shift+P is Firefox's non-preventable "New Private Window" shortcut,
+  // so we use Ctrl+Alt+P instead. No default binding in Chrome/Firefox/Edge.
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       const modKey = e.ctrlKey || e.metaKey
-      if (modKey && e.shiftKey && e.key === 'P') {
+      // Use e.code ('KeyP') not e.key ('p'/'π') — on macOS Option+P produces 'π',
+      // so e.key is unreliable for modifier-augmented shortcuts.
+      if (modKey && e.altKey && e.code === 'KeyP') {
         e.preventDefault()
         if (mode === 'preview') {
           // Return to previous editing mode
@@ -636,25 +640,13 @@ export default function VisualMarkdownEditorPage() {
 
   // ── Mode icons ─────────────────────────────────────────────────────────────
 
+  // Labels/titles/order come from EDITOR_MODES in logic.ts (single source of
+  // truth, React-free); only the icons are defined here.
   const modeIcons: Record<VmeEditorMode, React.ReactNode> = {
     wysiwyg:  <Layers   className="h-3.5 w-3.5" />,
     markdown: <Code2    className="h-3.5 w-3.5" />,
     preview:  <Eye      className="h-3.5 w-3.5" />,
     split:    <Columns2 className="h-3.5 w-3.5" />,
-  }
-
-  const modeLabels: Record<VmeEditorMode, string> = {
-    wysiwyg:  'Visual',
-    markdown: 'Markdown',
-    preview:  'Preview',
-    split:    'Split',
-  }
-
-  const modeTitles: Record<VmeEditorMode, string> = {
-    wysiwyg:  'Visual editor',
-    markdown: 'Markdown source',
-    preview:  'Preview',
-    split:    'Split view (markdown | preview)',
   }
 
   // ── Top toolbar (mode switcher + doc actions) ──────────────────────────────
@@ -701,15 +693,15 @@ export default function VisualMarkdownEditorPage() {
         onValueChange={(v) => { if (v) handleModeChange(v as VmeEditorMode) }}
         className="gap-0 shrink-0"
       >
-        {(['wysiwyg', 'markdown', 'preview', 'split'] as VmeEditorMode[]).map((m) => (
+        {EDITOR_MODES.map((m) => (
           <ToggleGroupItem
-            key={m}
-            value={m}
+            key={m.id}
+            value={m.id}
             className="h-7 px-2 text-[11px] font-medium gap-1"
-            title={modeTitles[m]}
+            title={m.title}
           >
-            {modeIcons[m]}
-            <span className="hidden sm:inline">{modeLabels[m]}</span>
+            {modeIcons[m.id]}
+            <span className="hidden sm:inline">{m.label}</span>
           </ToggleGroupItem>
         ))}
       </ToggleGroup>
@@ -814,6 +806,7 @@ export default function VisualMarkdownEditorPage() {
 
         {mode === 'split' && (
           <ResizablePanelGroup
+            key={isDesktop ? 'split-h' : 'split-v'}
             orientation={isDesktop ? 'horizontal' : 'vertical'}
             className="h-full"
           >
@@ -847,8 +840,11 @@ export default function VisualMarkdownEditorPage() {
   return (
     <div className="flex flex-col h-full overflow-hidden">
 
-      {/* ── Desktop layout (md+) ── */}
-      <div className="hidden md:flex flex-1 min-h-0 overflow-hidden">
+      {/* Single unified layout — the only structural difference between
+          desktop and mobile is the collapsible right-panel doc list.
+          The editor area (editorArea) is rendered ONCE so exactly one
+          TipTap instance mounts, sharing a single wysiwygRef. */}
+      <div className="flex flex-1 min-h-0 overflow-hidden">
 
         {/* CENTER: top toolbar + editor */}
         <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
@@ -861,54 +857,45 @@ export default function VisualMarkdownEditorPage() {
           />
         </div>
 
-        {/* RIGHT: collapsible document list */}
-        <Collapsible
-          open={docsOpen}
-          onOpenChange={setDocsOpen}
-          className="flex shrink-0"
-        >
-          {/* Collapse/expand toggle */}
-          <CollapsibleTrigger asChild>
-            <button
-              className="shrink-0 flex items-center justify-center w-5 border-l border-border bg-muted/30 hover:bg-muted/60 transition-colors text-muted-foreground hover:text-foreground"
-              title={docsOpen ? 'Hide documents' : 'Show documents'}
-              aria-label={docsOpen ? 'Hide document list' : 'Show document list'}
-            >
-              {docsOpen ? (
-                <ChevronRight className="h-3 w-3" />
-              ) : (
-                <ChevronLeft className="h-3 w-3" />
-              )}
-            </button>
-          </CollapsibleTrigger>
-
-          <CollapsibleContent
-            className={cn(
-              'overflow-hidden border-l border-border bg-card flex flex-col',
-              docsOpen ? 'w-44 lg:w-52' : 'w-0',
-            )}
+        {/* RIGHT: collapsible document list — desktop only (md+) */}
+        {isDesktop && (
+          <Collapsible
+            open={docsOpen}
+            onOpenChange={setDocsOpen}
+            className="flex shrink-0"
           >
-            <DocSidePanel
-              docs={docs}
-              activeDocId={activeDocId}
-              onSelect={switchDoc}
-              onNew={createDoc}
-              onDelete={deleteDoc}
-              onRename={(id, title) => updateDoc(id, { title })}
-            />
-          </CollapsibleContent>
-        </Collapsible>
-      </div>
+            {/* Collapse/expand toggle */}
+            <CollapsibleTrigger asChild>
+              <button
+                className="shrink-0 flex items-center justify-center w-5 border-l border-border bg-muted/30 hover:bg-muted/60 transition-colors text-muted-foreground hover:text-foreground"
+                title={docsOpen ? 'Hide documents' : 'Show documents'}
+                aria-label={docsOpen ? 'Hide document list' : 'Show document list'}
+              >
+                {docsOpen ? (
+                  <ChevronRight className="h-3 w-3" />
+                ) : (
+                  <ChevronLeft className="h-3 w-3" />
+                )}
+              </button>
+            </CollapsibleTrigger>
 
-      {/* ── Mobile layout (<md) ── */}
-      <div className="flex md:hidden flex-col flex-1 min-h-0 overflow-hidden">
-        {topToolbar}
-        {editorArea}
-        <StatusBar
-          text={activeDoc.content}
-          model={selectedModel}
-          onModelChange={setModel}
-        />
+            <CollapsibleContent
+              className={cn(
+                'overflow-hidden border-l border-border bg-card flex flex-col',
+                docsOpen ? 'w-44 lg:w-52' : 'w-0',
+              )}
+            >
+              <DocSidePanel
+                docs={docs}
+                activeDocId={activeDocId}
+                onSelect={switchDoc}
+                onNew={createDoc}
+                onDelete={deleteDoc}
+                onRename={(id, title) => updateDoc(id, { title })}
+              />
+            </CollapsibleContent>
+          </Collapsible>
+        )}
       </div>
 
     </div>

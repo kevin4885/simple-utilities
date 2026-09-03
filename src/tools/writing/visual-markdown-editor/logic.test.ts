@@ -10,6 +10,7 @@ import {
   AUTO_VERSION_CAP,
   // VME-specific
   getModeLabel,
+  EDITOR_MODES,
   toSafeFilename,
   KEYBOARD_SHORTCUTS,
 } from './logic'
@@ -120,6 +121,22 @@ describe('formatVersionTime', () => {
 // VME-specific helpers
 // ---------------------------------------------------------------------------
 
+describe('EDITOR_MODES', () => {
+  it('lists the four modes in display order with unique ids', () => {
+    expect(EDITOR_MODES.map((m) => m.id)).toEqual(['wysiwyg', 'markdown', 'preview', 'split'])
+    expect(new Set(EDITOR_MODES.map((m) => m.id)).size).toBe(EDITOR_MODES.length)
+  })
+  it('every mode has a non-empty label and title', () => {
+    for (const m of EDITOR_MODES) {
+      expect(m.label.length).toBeGreaterThan(0)
+      expect(m.title.length).toBeGreaterThan(0)
+    }
+  })
+  it('getModeLabel reads from EDITOR_MODES', () => {
+    for (const m of EDITOR_MODES) expect(getModeLabel(m.id)).toBe(m.label)
+  })
+})
+
 describe('getModeLabel', () => {
   it('returns correct labels', () => {
     expect(getModeLabel('wysiwyg')).toBe('Visual')
@@ -186,6 +203,15 @@ describe('KEYBOARD_SHORTCUTS', () => {
     const found = KEYBOARD_SHORTCUTS.find((s) => s.keys.includes('Ctrl+Z'))
     expect(found).toBeDefined()
     expect(found?.description.toLowerCase()).toMatch(/undo/)
+  })
+
+  it('includes Ctrl+Alt+P for toggle preview (not Ctrl+Shift+P)', () => {
+    const found = KEYBOARD_SHORTCUTS.find((s) => s.category === 'View' && s.keys.includes('Ctrl+Alt+P'))
+    expect(found).toBeDefined()
+    expect(found?.description.toLowerCase()).toMatch(/preview/)
+    // Must NOT have the old Ctrl+Shift+P binding (Firefox private-window conflict)
+    const oldBinding = KEYBOARD_SHORTCUTS.find((s) => s.keys.includes('Ctrl+Shift+P'))
+    expect(oldBinding).toBeUndefined()
   })
 })
 

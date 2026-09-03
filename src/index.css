@@ -410,7 +410,8 @@
   /* Note: override placed here — Tailwind utilities take precedence,
      so also add !important to guarantee the value over px-4. */
   .wysiwyg-prose {
-    padding-left: 1.5rem !important; /* pl-6 — was px-4 = 1rem; !important beats utility layer */
+    padding-left: 1.5rem !important; /* row handle sits ~14px left of a table */
+    padding-top: 1.25rem !important; /* column handle sits ~14px above a table */
   }
 }
 

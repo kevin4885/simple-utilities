@@ -3,6 +3,9 @@
  *
  * React hook that returns true when the given CSS media query matches.
  *
+ * Implementation: useSyncExternalStore (React 18+) — cleaner and correct
+ * under React 19 concurrent mode than the previous useState+useEffect pattern.
+ *
  * Test-friendly: if matchMedia is not available (Node / jsdom without setup)
  * the hook returns `defaultValue` (default: false) and never throws.
  *
@@ -10,28 +13,37 @@
  *   const isDesktop = useMediaQuery('(min-width: 768px)')
  */
 
-import { useState, useEffect } from 'react'
+import { useMemo, useSyncExternalStore } from 'react'
+
+function getServerSnapshot(): boolean {
+  return false
+}
 
 export function useMediaQuery(query: string, defaultValue = false): boolean {
-  const [matches, setMatches] = useState<boolean>(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
-      return defaultValue
+  // ssrSnapshot — used on server and in environments without matchMedia
+  const ssrSnapshot = defaultValue
+
+  // Memoize subscribe and getSnapshot so they are stable across renders
+  // (avoids tearing down + re-adding the addEventListener on every render).
+  const [subscribe, getSnapshot] = useMemo(() => {
+    const sub = (callback: () => void) => {
+      if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+        return () => {}
+      }
+      const mql = window.matchMedia(query)
+      mql.addEventListener('change', callback)
+      return () => mql.removeEventListener('change', callback)
     }
-    return window.matchMedia(query).matches
-  })
 
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
+    const snap = () => {
+      if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+        return ssrSnapshot
+      }
+      return window.matchMedia(query).matches
+    }
 
-    const mql = window.matchMedia(query)
-    const onChange = (e: MediaQueryListEvent) => setMatches(e.matches)
+    return [sub, snap]
+  }, [query, ssrSnapshot])
 
-    // Sync to current value when query changes (callback-based, not direct setState)
-    onChange({ matches: mql.matches } as MediaQueryListEvent)
-
-    mql.addEventListener('change', onChange)
-    return () => mql.removeEventListener('change', onChange)
-  }, [query])
-
-  return matches
+  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
 }

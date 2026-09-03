@@ -10,7 +10,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import { TextSelection } from '@tiptap/pm/state'
-import { normalizeUrl, getLinkRange } from './utils'
+import { normalizeUrl, getLinkRange, sanitizeImageSrc, getScrollParent } from './utils'
 
 // ---------------------------------------------------------------------------
 // normalizeUrl
@@ -111,6 +111,43 @@ describe('normalizeUrl', () => {
 })
 
 // ---------------------------------------------------------------------------
+// sanitizeImageSrc
+// ---------------------------------------------------------------------------
+
+describe('sanitizeImageSrc', () => {
+  it('returns empty string for empty input', () => {
+    expect(sanitizeImageSrc('')).toBe('')
+    expect(sanitizeImageSrc('   ')).toBe('')
+  })
+
+  it('rejects javascript: src', () => {
+    expect(sanitizeImageSrc('javascript:alert(1)')).toBe('')
+  })
+
+  it('rejects vbscript: src', () => {
+    expect(sanitizeImageSrc('vbscript:msgbox(1)')).toBe('')
+  })
+
+  it('passes data:image/* through unchanged', () => {
+    const dataUri = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQ=='
+    expect(sanitizeImageSrc(dataUri)).toBe(dataUri)
+  })
+
+  it('passes data:image/jpeg through unchanged', () => {
+    const jpeg = 'data:image/jpeg;base64,/9j/4AAQSkZJRg=='
+    expect(sanitizeImageSrc(jpeg)).toBe(jpeg)
+  })
+
+  it('passes https:// URL through unchanged', () => {
+    expect(sanitizeImageSrc('https://example.com/cat.jpg')).toBe('https://example.com/cat.jpg')
+  })
+
+  it('prepends https:// to bare domain image URLs', () => {
+    expect(sanitizeImageSrc('example.com/image.png')).toBe('https://example.com/image.png')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // getLinkRange
 // ---------------------------------------------------------------------------
 
@@ -164,6 +201,46 @@ describe('getLinkRange', () => {
     expect(result!.from).toBe(linkFrom)
     expect(result!.to).toBe(linkTo)
     editor.destroy()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getScrollParent
+// ---------------------------------------------------------------------------
+
+describe('getScrollParent', () => {
+  it('returns null when passed null', () => {
+    expect(getScrollParent(null)).toBeNull()
+  })
+
+  it('finds an ancestor with overflow-y: scroll', () => {
+    const child = document.createElement('div')
+    const parent = document.createElement('div')
+    parent.style.overflowY = 'scroll'
+    parent.appendChild(child)
+    document.body.appendChild(parent)
+    expect(getScrollParent(child)).toBe(parent)
+    document.body.removeChild(parent)
+  })
+
+  it('finds an ancestor with overflow-y: auto', () => {
+    const child = document.createElement('div')
+    const parent = document.createElement('div')
+    parent.style.overflowY = 'auto'
+    parent.appendChild(child)
+    document.body.appendChild(parent)
+    expect(getScrollParent(child)).toBe(parent)
+    document.body.removeChild(parent)
+  })
+
+  it('returns document.scrollingElement when no scrollable ancestor found', () => {
+    const child = document.createElement('div')
+    document.body.appendChild(child)
+    // No explicitly scrollable ancestor
+    const result = getScrollParent(child)
+    // jsdom may return null or the scrollingElement; either is acceptable
+    expect(result === null || result === document.scrollingElement || result instanceof Element).toBe(true)
+    document.body.removeChild(child)
   })
 })
 

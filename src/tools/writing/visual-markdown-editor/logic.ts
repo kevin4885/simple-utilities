@@ -26,17 +26,32 @@ export {
 // VME-specific helpers
 // ---------------------------------------------------------------------------
 
+/** Editor mode ids — must match EditorModeSchema in store.ts. */
+export type EditorModeId = 'wysiwyg' | 'markdown' | 'preview' | 'split'
+
+export interface EditorModeMeta {
+  id: EditorModeId
+  /** Short label shown next to the icon in the mode toggle. */
+  label: string
+  /** Tooltip / title text for the mode toggle button. */
+  title: string
+}
+
 /**
- * Derive a display mode label for the four-way mode toggle.
- * Returns the human-readable label for each mode id.
+ * Single source of truth for the four-way mode toggle (order = display order).
+ * Icons live in index.tsx (this file stays React-free); everything else
+ * about a mode is defined here.
  */
-export function getModeLabel(mode: 'wysiwyg' | 'markdown' | 'preview' | 'split'): string {
-  switch (mode) {
-    case 'wysiwyg':   return 'Visual'
-    case 'markdown':  return 'Markdown'
-    case 'preview':   return 'Preview'
-    case 'split':     return 'Split'
-  }
+export const EDITOR_MODES: readonly EditorModeMeta[] = [
+  { id: 'wysiwyg',  label: 'Visual',   title: 'Visual editor' },
+  { id: 'markdown', label: 'Markdown', title: 'Markdown source' },
+  { id: 'preview',  label: 'Preview',  title: 'Preview' },
+  { id: 'split',    label: 'Split',    title: 'Split view (markdown | preview)' },
+]
+
+/** Human-readable label for a mode id. */
+export function getModeLabel(mode: EditorModeId): string {
+  return EDITOR_MODES.find((m) => m.id === mode)?.label ?? mode
 }
 
 /**
@@ -82,7 +97,8 @@ export interface ShortcutEntry {
  *   linkKeyboard extension (table)  — Mod-Enter, Mod-Shift-Enter,
  *                                     Mod-Alt-←/→/Backspace
  *   undo/redo                       — Ctrl+Z / Ctrl+Shift+Z (StarterKit UndoRedo)
- *   VME page (Phase 4)              — Ctrl+Shift+P toggles preview
+ *   VME page                        — Ctrl+Alt+P toggles preview (replaces Ctrl+Shift+P
+ *                                     which is Firefox's non-preventable New Private Window)
  */
 export const KEYBOARD_SHORTCUTS: ShortcutEntry[] = [
   // ── Text formatting ─────────────────────────────────────────────────────
@@ -120,7 +136,7 @@ export const KEYBOARD_SHORTCUTS: ShortcutEntry[] = [
   { category: 'Tables',     keys: 'Ctrl+Alt+←',               description: 'Add column before' },
   { category: 'Tables',     keys: 'Ctrl+Alt+Backspace',        description: 'Delete row' },
   // ── View ────────────────────────────────────────────────────────────────
-  { category: 'View',       keys: 'Ctrl+Shift+P / Cmd+Shift+P', description: 'Toggle Preview mode (returns to previous mode)' },
+  { category: 'View',       keys: 'Ctrl+Alt+P / Cmd+Alt+P', description: 'Toggle Preview mode (returns to previous mode)' },
   // ── Selection toolbar ────────────────────────────────────────────────────
   { category: 'Selection',  keys: 'Select text',               description: 'Show inline formatting toolbar (bold, italic, link…)' },
   // ── Table controls ───────────────────────────────────────────────────────

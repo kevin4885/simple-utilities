@@ -6,8 +6,7 @@
  * (with frozen position:fixed anchor) has been removed.
  *
  * Exported:
- *   LinkForm        — the form UI
- *   LinkPopoverState / LinkPopoverProps — kept for test/external compatibility
+ *   LinkForm — the form UI
  */
 
 import { useState, useEffect, useRef } from 'react'
@@ -19,15 +18,6 @@ import { normalizeUrl } from '../utils'
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-/** @deprecated — kept for backward-compat; use WidgetPopover instead */
-export interface LinkPopoverState {
-  open: boolean
-  initialText: string
-  initialHref: string
-  isEditing: boolean
-  anchorRect: null
-}
 
 export interface LinkFormProps {
   initialText: string

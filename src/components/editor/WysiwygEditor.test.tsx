@@ -20,6 +20,32 @@ import { Markdown } from 'tiptap-markdown'
 import WysiwygEditor, { type WysiwygEditorHandle } from './WysiwygEditor'
 import { createTestEditor, getMarkdown } from './wysiwyg/testUtils'
 
+// ---------------------------------------------------------------------------
+// S1: verify exactly one WysiwygEditor mounts (no duplicate desktop+mobile)
+// ---------------------------------------------------------------------------
+
+describe('WysiwygEditor — single instance per mount', () => {
+  it('renders exactly one .ProseMirror element when mounted', () => {
+    const { container, unmount } = render(
+      <WysiwygEditor value="# Hello" onChange={vi.fn()} />,
+    )
+    const proseMirrors = container.querySelectorAll('.ProseMirror')
+    expect(proseMirrors.length).toBe(1)
+    unmount()
+  })
+
+  it('renders exactly one .ProseMirror under StrictMode', () => {
+    const { container, unmount } = render(
+      <StrictMode>
+        <WysiwygEditor value="# Hello" onChange={vi.fn()} />
+      </StrictMode>,
+    )
+    const proseMirrors = container.querySelectorAll('.ProseMirror')
+    expect(proseMirrors.length).toBe(1)
+    unmount()
+  })
+})
+
 describe('WysiwygEditor lifecycle', () => {
   it('documents the TipTap behaviour: storage.markdown disappears after destroy()', () => {
     const e = new Editor({ extensions: [StarterKit, Markdown], content: '# Hi' })
@@ -67,6 +93,32 @@ describe('WysiwygEditor lifecycle', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// N8: toggling readOnly must NOT recreate the editor (no undo history loss)
+// ---------------------------------------------------------------------------
+
+describe('WysiwygEditor — readOnly toggle does not recreate editor', () => {
+  it('editor identity is stable when readOnly flips true→false→true', () => {
+    const { container, rerender, unmount } = render(
+      <WysiwygEditor value="# Hello" readOnly={false} />,
+    )
+    const pm1 = container.querySelector('.ProseMirror') as HTMLElement
+    expect(pm1).toBeTruthy()
+
+    rerender(<WysiwygEditor value="# Hello" readOnly={true} />)
+    const pm2 = container.querySelector('.ProseMirror') as HTMLElement
+    expect(pm2).toBeTruthy()
+    // Same DOM element = same editor instance (not recreated)
+    expect(pm2).toBe(pm1)
+
+    rerender(<WysiwygEditor value="# Hello" readOnly={false} />)
+    const pm3 = container.querySelector('.ProseMirror') as HTMLElement
+    expect(pm3).toBe(pm1)
+
+    unmount()
   })
 })
 

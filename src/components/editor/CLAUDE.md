@@ -19,7 +19,7 @@ These are hand-rolled app components — **not** shadcn/ui (which lives in `src/
 |---|---|
 | `WysiwygEditor.tsx` | **Main component** — assembles all submodules; exports `WysiwygEditorHandle` / `WysiwygEditorProps` |
 | `WysiwygErrorBoundary.tsx` | **Error boundary** — class component wrapping `<WysiwygEditor>` usage; on crash flushes pending edits, calls `onError` prop, renders inline fallback; see Phase 4 section below |
-| `utils.ts` | `normalizeUrl()` (canonical implementation) + `getLinkRange(state)` — returns `{from,to}` of the link mark under cursor, or null. |
+| `utils.ts` | `normalizeUrl()` + `sanitizeImageSrc()` + `getScrollParent()` + `getLinkRange(state)` — URL sanitisation, nearest-scrollable-ancestor finder, link mark range helper |
 | `utils.test.ts` | Tests for `wysiwyg/utils.ts` (full normalizeUrl suite + getLinkRange + autolink round-trip) |
 | `extensions/linkKeyboard.ts` | `MARKDOWN_LINK_REGEX` + `buildLinkKeyboardExtension` (Mod-k, Mod-Shift-k, table shortcuts, input rule) |
 | `extensions/slashCommand.tsx` | `buildSlashExtension` + `SlashMenuPortal` / `SlashMenuInner` (derives items from `SLASH_ITEMS`) |
@@ -477,43 +477,44 @@ gravity-ui/Notion-style in-place controls.
 
 | File | Purpose |
 |---|---|
-| plugin.ts | ProseMirror plugin — focused-table decoration, throttled hover tracking, 	ableControlsKey |
-| commands.ts | Pure helpers: selectRow, selectColumn, moveRow, moveColumn, isRectangularTable, unToggleHeaderRow |
+| plugin.ts | ProseMirror plugin — focused-table decoration, throttled hover tracking, tableControlsKey |
+| commands.ts | Pure helpers: selectRow, selectColumn, moveRow, moveColumn, isRectangularTable, getEditorTablePos |
 | TableControls.tsx | React overlay — row/column handle pills + edge "+" buttons |
-| index.ts | 	ableControlsExtension TipTap Extension; re-exports 	ableControlsKey, setDropdownOpen, commands |
+| index.ts | tableControlsExtension TipTap Extension; re-exports tableControlsKey, setDropdownOpen, commands |
 | commands.test.ts | Vitest tests for commands + throttle utility |
 
-### Plugin state (	ableControlsKey.getState(state))
+### Plugin state (tableControlsKey.getState(state))
 
-`	s
+```ts
 interface TableControlsState {
   tablePos: number | null    // pos of table node containing selection, or null
   hover: { rowIdx: number; colIdx: number } | null  // hovered cell
+  menuOpen: boolean          // true while a row/column dropdown is open (per-instance)
   decorations: DecorationSet  // focused outline + data-row-handle / data-col-handle attrs
 }
-`
+```
 
 ### How it works
 
 1. **Focus decoration**: when selection is inside a table, Decoration.node adds wysiwyg-table-focused class (subtle ring outline).
-2. **Hover tracking**: throttled (100 ms) mousemove resolves the cell under the pointer via posAtCoords + walking up to 	ableCell/	ableHeader + TableMap.findCell. Dispatches 	r.setMeta(tableControlsKey, { type: 'hover', rowIdx, colIdx }). mouseleave clears after 150 ms grace.
+2. **Hover tracking**: throttled (100 ms) mousemove resolves the cell under the pointer via posAtCoords + walking up to tableCell/tableHeader + TableMap.findCell. Dispatches tr.setMeta(tableControlsKey, { type: 'hover', rowIdx, colIdx }). mouseleave clears after 150 ms grace.
 3. **Handle decorations**: when hover is set, Decoration.node adds data-row-handle attr to the first cell of the hovered row, and data-col-handle attr to the first-row cell in the hovered column. These are queried by TableControls.tsx to measure handle positions.
-4. **React overlay** (TableControls.tsx): subscribed to editor 	ransaction events; re-measures rects on scroll/resize. Renders handle pills and edge "+" buttons using absolute positioning inside wysiwyg-root.
+4. **React overlay** (TableControls.tsx): subscribed to editor transaction events; re-measures rects on scroll/resize. Renders handle pills and edge "+" buttons using absolute positioning inside wysiwyg-root. Uses `getScrollParent(editor.view.dom)` (from `utils.ts`) to find the nearest scrollable ancestor — not `closest('.overflow-y-auto')` which was coupled to Tailwind class names.
 5. **Dropdown blur guard**: all handle buttons use onMouseDown={e=>e.preventDefault()} to prevent editor blur. Menus use onCloseAutoFocus to refocus the editor.
 6. **Dropdown-open freeze**: setDropdownOpen(true) is called when a row/col menu opens, so the mousemove handler ignores events while a menu is displayed.
 
 ### Handles
 
-**Row handle** (6×22px pill at 	ableRect.left - 14px, vertically centered on [data-row-handle] cell):
+**Row handle** (6×22px pill at tableRect.left - 14px, vertically centered on [data-row-handle] cell):
 - Click opens DropdownMenu: Insert row above *(disabled on header row)*, Insert row below, Move row up *(disabled if rowIdx ≤ 1 or non-rectangular)*, Move row down *(disabled if rowIdx === 0 (header) or last row or non-rectangular)*, Delete row *(disabled on header row)*, Delete table.
 - "Toggle header row" has been removed — GFM tables always have a header row; removing it would break the serialiser invariant.
 
-**Column handle** (22×6px pill at 	ableRect.top - 14px, horizontally centered on [data-col-handle] cell):
+**Column handle** (22×6px pill at tableRect.top - 14px, horizontally centered on [data-col-handle] cell):
 - Click opens DropdownMenu: Insert column left, Insert column right, Move column left *(disabled if first col or non-rectangular)*, Move column right *(disabled if last col or non-rectangular)*, Delete column, Delete table.
 
 **Edge "+" buttons** (20×20px round):
-- Right edge: Append column (ddColumnAfter)
-- Bottom edge: Append row (ddRowAfter)
+- Right edge: Append column (addColumnAfter)
+- Bottom edge: Append row (addRowAfter)
 
 ### Move operations
 
@@ -638,6 +639,34 @@ Exports headless test helpers that use **the exact same extension config as Wysi
 ### Split mode
 
 Split mode is implemented entirely in the VME page (`tools/writing/visual-markdown-editor/index.tsx`) — it is NOT a WysiwygEditor feature. Split renders a `ResizablePanelGroup` with `CodeEditor` (left) and `MarkdownRenderer` (right). Below `md` breakpoint the direction switches to `vertical` via the `useMediaQuery('(min-width: 768px)')` hook in `src/lib/useMediaQuery.ts`.
+
+The panel group is keyed on orientation (`key={isDesktop ? 'split-h' : 'split-v'}`) so `react-resizable-panels` remounts cleanly if it cannot change direction at runtime.
+
+The VME page uses a **single unified layout**: the editor area is rendered once (not duplicated in a hidden desktop + mobile block). The desktop vs mobile difference is only whether the collapsible right-panel doc list is shown (controlled by `isDesktop`).
+
+**Mode ids / labels / titles / order** live in `EDITOR_MODES` in the VME `logic.ts` (React-free single source of truth; `getModeLabel()` reads from it). `index.tsx` only adds the Lucide icon per id (`modeIcons`) and maps over `EDITOR_MODES` to render the toggle. Adding a mode = one entry in `EDITOR_MODES`, one icon, and the `EditorModeSchema` enum in `store.ts`.
+
+### Preview toggle keyboard shortcut
+
+**`Ctrl+Alt+P` / `Cmd+Alt+P`** — toggles between the current editing mode and Preview, remembering the previous mode to return to.
+
+`Ctrl+Shift+P` is NOT used — that keystroke opens Firefox's New Private Window and cannot be prevented.
+
+### Image src sanitisation
+
+Every code path that inserts or updates an image `src` must call `sanitizeImageSrc(src)` from `wysiwyg/utils.ts` before passing to `setImage`/`updateAttributes`:
+- `WidgetPopover.tsx handleImageSave` — calls `sanitizeImageSrc`
+- `WysiwygEditor.tsx handlePaste` / `handleDrop` — calls `sanitizeImageSrc` on the data URI
+
+`sanitizeImageSrc` passes `data:image/*` through unchanged, and runs `normalizeUrl` on everything else (which blocks `javascript:` / `vbscript:` and prepends `https://` to bare domains).
+
+### extensions useMemo deps
+
+`WysiwygEditor` keeps `readOnly` and `placeholder` **out of the `extensions` useMemo deps**. Changing them must not rebuild the editor (which would destroy undo history and lose the selection). Instead:
+- `readOnly` changes are applied via `editor.setEditable(!readOnly)` in a `useEffect`
+- `placeholder` changes are read from a ref inside extension callbacks
+
+Only `minimal` is in the deps (because it changes the structural extension array by adding/removing the slash menu).
 
 ### Focus discipline rule
 

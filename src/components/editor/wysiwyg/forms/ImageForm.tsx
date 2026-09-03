@@ -15,8 +15,7 @@
  * See src/components/editor/CLAUDE.md for the deliberate constraint note.
  *
  * Exported:
- *   ImageForm        — the form UI
- *   ImagePopoverState / ImagePopoverProps — kept for backward-compat
+ *   ImageForm — the form UI
  */
 
 import { useState, useEffect, useRef } from 'react'
@@ -30,15 +29,6 @@ import { cn } from '@/lib/utils'
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-/** @deprecated — kept for backward-compat; use WidgetPopover instead */
-export interface ImagePopoverState {
-  open: boolean
-  initialSrc: string
-  initialAlt: string
-  isEditing: boolean
-  anchorRect: null
-}
 
 export interface ImageFormProps {
   initialSrc: string
@@ -69,6 +59,7 @@ export function ImageForm({
   const [title, setTitle] = useState(initialTitle)
   const [dragging, setDragging] = useState(false)
   const [sizeWarning, setSizeWarning] = useState<string | null>(null)
+  const [fileError, setFileError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const srcInputRef = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -96,7 +87,11 @@ export function ImageForm({
   }
 
   async function handleFile(file: File) {
-    if (!isImageFile(file)) return
+    if (!isImageFile(file)) {
+      setFileError("That file doesn't look like an image — try a PNG, JPEG, GIF, or WebP.")
+      return
+    }
+    setFileError(null)
     if (file.size > SIZE_WARNING_BYTES) {
       setSizeWarning(`Large image (${formatBytes(file.size)}) — this will bloat the document.`)
     } else {
@@ -111,6 +106,8 @@ export function ImageForm({
         const name = file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ')
         setAlt(name)
       }
+    } catch {
+      setFileError("Couldn't read that file — please try again.")
     } finally {
       setLoading(false)
     }
@@ -120,7 +117,7 @@ export function ImageForm({
     e.preventDefault()
     setDragging(false)
     const file = e.dataTransfer.files[0]
-    if (file) handleFile(file)
+    if (file) void handleFile(file)
   }
 
   function handleDragOver(e: React.DragEvent) {
@@ -134,7 +131,7 @@ export function ImageForm({
 
   function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
-    if (file) handleFile(file)
+    if (file) void handleFile(file)
   }
 
   const hasPreview = src.startsWith('data:image') || src.startsWith('http')
@@ -193,6 +190,13 @@ export function ImageForm({
         <div className="flex items-start gap-1.5 text-[10px] text-amber-600 dark:text-amber-400 leading-tight">
           <AlertTriangleIcon className="h-3 w-3 shrink-0 mt-0.5" />
           <span>{sizeWarning}</span>
+        </div>
+      )}
+
+      {fileError && (
+        <div className="flex items-start gap-1.5 text-[10px] text-destructive leading-tight">
+          <AlertTriangleIcon className="h-3 w-3 shrink-0 mt-0.5" />
+          <span>{fileError}</span>
         </div>
       )}
 

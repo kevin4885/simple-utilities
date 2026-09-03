@@ -185,7 +185,7 @@ function buildDecorations(
 // Find table position for the current selection
 // ---------------------------------------------------------------------------
 
-function getTablePos(state: EditorState): number | null {
+export function getTablePos(state: EditorState): number | null {
   const { selection } = state
   const $anchor =
     selection instanceof CellSelection ? selection.$anchorCell : selection.$from
@@ -331,9 +331,18 @@ export function createTableControlsPlugin(): Plugin<TableControlsState> {
           return false
         },
 
-        mouseleave(view: EditorView) {
+        mouseleave(view: EditorView, event: Event) {
           const pluginState = tableControlsKey.getState(view.state)
           if (!pluginState || pluginState.hover === null) return false
+
+          // If the pointer moved into the TableControls overlay (which is
+          // positioned just outside the editor DOM — e.g. column handle at
+          // tableRect.top - 14px), we must NOT clear hover. The overlay has
+          // [data-wysiwyg-table-controls], so check via closest().
+          const related = (event as MouseEvent).relatedTarget
+          if (related instanceof Element && related.closest('[data-wysiwyg-table-controls]')) {
+            return false
+          }
 
           // If a dropdown is open, the pointer may have left the editor DOM
           // to reach the Radix portal in <body>. Do NOT clear hover — that

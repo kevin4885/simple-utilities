@@ -282,9 +282,10 @@ describe('tableControlsPlugin menuOpen meta', () => {
     // Call the mouseleave handler directly via plugin's handleDOMEvents
     const plugin = pluginEditor.state.plugins.find((p) => p.spec.key === tableControlsKey)
     // Access handleDOMEvents from plugin props
-    const handleDOMEvents = (plugin?.props as { handleDOMEvents?: { mouseleave?: (view: unknown) => boolean } })?.handleDOMEvents
+    const handleDOMEvents = (plugin?.props as { handleDOMEvents?: { mouseleave?: (view: unknown, event: unknown) => boolean } })?.handleDOMEvents
     if (handleDOMEvents?.mouseleave) {
-      handleDOMEvents.mouseleave(pluginEditor.view)
+      // Pass a synthetic event with relatedTarget=null (pointer left the window, not into controls overlay)
+      handleDOMEvents.mouseleave(pluginEditor.view, { relatedTarget: null } as unknown as Event)
     }
 
     // Hover should still be set (not cleared because menu is open)

@@ -32,10 +32,10 @@ import type { Editor } from '@tiptap/core'
 import {
   CellSelection,
   TableMap,
-  findTable,
   moveTableRow,
   moveTableColumn,
 } from '@tiptap/pm/tables'
+import { getTablePos } from './plugin'
 
 // ---------------------------------------------------------------------------
 // Select a whole row
@@ -212,12 +212,11 @@ export function moveColumn(
 
 // ---------------------------------------------------------------------------
 // Helper: get current table position from editor state
+//
+// Delegates to getTablePos() from plugin.ts (same logic; deduplication).
+// Kept as a named export for callers that import from commands.ts directly.
 // ---------------------------------------------------------------------------
 
 export function getEditorTablePos(editor: Editor): number | null {
-  const { selection } = editor.state
-  const $anchor =
-    selection instanceof CellSelection ? selection.$anchorCell : selection.$from
-  const result = findTable($anchor)
-  return result ? result.pos : null
+  return getTablePos(editor.state)
 }

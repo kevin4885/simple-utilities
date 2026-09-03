@@ -27,7 +27,7 @@ import { TextSelection, NodeSelection } from '@tiptap/pm/state'
 import { LinkForm } from './LinkForm'
 import { ImageForm } from './ImageForm'
 import { TableForm } from './TableForm'
-import { getLinkRange } from '../utils'
+import { getLinkRange, sanitizeImageSrc } from '../utils'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -199,10 +199,14 @@ export function WidgetPopover({ editor }: WidgetPopoverProps) {
     const isImageEdit = active.kind === 'image' && editor.isActive('image')
     const selFrom = active.selectionFrom
     editor.commands.closeWidgetForm()
-    if (!src) return
+
+    // Sanitize src: blocks javascript: / vbscript:; passes data:image/* through;
+    // normalizes bare domains by prepending https://.
+    const safeSrc = sanitizeImageSrc(src)
+    if (!safeSrc) return
 
     if (isImageEdit) {
-      editor.chain().focus().updateAttributes('image', { src, alt, title: title || undefined }).run()
+      editor.chain().focus().updateAttributes('image', { src: safeSrc, alt, title: title || undefined }).run()
       return
     }
 
@@ -211,7 +215,7 @@ export function WidgetPopover({ editor }: WidgetPopoverProps) {
     const resolvedPos = state.doc.resolve(Math.min(selFrom, state.doc.content.size))
     const tr = state.tr.setSelection(TextSelection.near(resolvedPos))
     editor.view.dispatch(tr)
-    editor.chain().focus().setImage({ src, alt, title: title || undefined } as Parameters<typeof editor.commands.setImage>[0]).run()
+    editor.chain().focus().setImage({ src: safeSrc, alt, title: title || undefined } as Parameters<typeof editor.commands.setImage>[0]).run()
   }
 
   function handleImageRemove() {

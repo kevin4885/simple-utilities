@@ -74,6 +74,54 @@ export function normalizeUrl(url: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// getScrollParent — nearest scrollable ancestor
+// ---------------------------------------------------------------------------
+
+/**
+ * Walk up the DOM tree to find the nearest ancestor that is scrollable
+ * (i.e. has `overflow-y: auto` or `overflow-y: scroll` via computed style).
+ * Falls back to `document.scrollingElement` if none is found.
+ *
+ * Replaces the fragile `el.closest('.overflow-y-auto')` pattern in
+ * TableControls.tsx which was coupled to Tailwind class names.
+ */
+export function getScrollParent(el: HTMLElement | null): HTMLElement | Element | null {
+  if (!el) return null
+  let node: HTMLElement | null = el.parentElement
+  while (node) {
+    const style = getComputedStyle(node)
+    const overflowY = style.overflowY
+    if (overflowY === 'auto' || overflowY === 'scroll') {
+      return node
+    }
+    node = node.parentElement
+  }
+  return (typeof document !== 'undefined' ? document.scrollingElement : null)
+}
+
+// ---------------------------------------------------------------------------
+// sanitizeImageSrc
+// ---------------------------------------------------------------------------
+
+/**
+ * Sanitise an image src before inserting/updating it in the editor.
+ *
+ * - Passes `data:image/*` URIs through unchanged (needed for file drop/paste).
+ * - Runs `normalizeUrl` on everything else, which blocks `javascript:` / `vbscript:`.
+ * - Returns '' if the result is empty (caller should not insert).
+ *
+ * This is a thin wrapper so every code-path that inserts an image src goes
+ * through the same security check.
+ */
+export function sanitizeImageSrc(src: string): string {
+  const trimmed = src.trim()
+  if (!trimmed) return ''
+  // data: URIs (file drop / paste) are safe and must not be mangled by normalizeUrl
+  if (trimmed.startsWith('data:image/')) return trimmed
+  return normalizeUrl(trimmed)
+}
+
+// ---------------------------------------------------------------------------
 // getLinkRange — find the full extent of the link mark at the cursor
 // ---------------------------------------------------------------------------
 

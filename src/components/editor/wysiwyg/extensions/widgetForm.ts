@@ -406,10 +406,22 @@ export const widgetFormExtension = Extension.create<Record<string, never>, Widge
     const storage = this.storage as WidgetFormStorage
     const getEditorView = () => this.editor.view
 
+    // Memoisation: only call _notify when the widget meaningfully changes.
+    // The plugin view's update() fires on EVERY transaction (including 100ms
+    // hover metas from tableControls), so skipping redundant notifications
+    // prevents WidgetPopover from re-rendering on every mousemove.
+    let lastNotifiedId: string | null = null
+    let lastNotifiedNull = true
+
     const plugin = createPlugin((pluginState, view) => {
       const raw = pluginState.active
       if (!raw) {
-        storage._notify(null)
+        // Only notify once per transition to null
+        if (!lastNotifiedNull) {
+          lastNotifiedId = null
+          lastNotifiedNull = true
+          storage._notify(null)
+        }
         return
       }
 
@@ -450,6 +462,25 @@ export const widgetFormExtension = Extension.create<Record<string, never>, Widge
           return found[0].from
         },
       }
+
+      // Skip notify if nothing meaningful changed (id, dom, ranges, positions)
+      if (!lastNotifiedNull && lastNotifiedId === raw.id) {
+        const prev = storage.active
+        if (
+          prev !== null &&
+          prev.dom === dom &&
+          prev.rangeFrom === raw.rangeFrom &&
+          prev.rangeTo === raw.rangeTo &&
+          prev.selectionFrom === raw.selectionFrom &&
+          prev.selectionTo === raw.selectionTo &&
+          prev.nodePos === raw.nodePos
+        ) {
+          return
+        }
+      }
+
+      lastNotifiedId = raw.id
+      lastNotifiedNull = false
       storage._notify(activeWidget)
     })
     return [plugin]
@@ -512,8 +543,10 @@ export const widgetFormExtension = Extension.create<Record<string, never>, Widge
           if (!ps?.active) return false
           if (dispatch) {
             dispatch(state.tr.setMeta(widgetFormKey, { type: 'close', id: ps.active.id }))
+            // Only focus as a side-effect when this is a real dispatch, not a dry-run
+            // (can() calls with dispatch=undefined must not touch editor focus)
+            editor.commands.focus()
           }
-          editor.commands.focus()
           return true
         },
     }

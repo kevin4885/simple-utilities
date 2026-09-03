@@ -4,8 +4,8 @@
  * React overlay component that renders gravity-ui-style table controls:
  *
  *  • Row handle pill — at left edge of hovered row; opens DropdownMenu
- *    (insert above/below, move up/down, toggle header row, delete row,
- *    delete table).
+ *    (insert above (disabled on header row), insert below, move up/down,
+ *    delete row (disabled on header row), delete table).
  *  • Column handle pill — at top edge of hovered column; opens DropdownMenu
  *    (insert left/right, move left/right, delete column, delete table).
  *  • Edge "+" buttons — append column (right edge) and append row (bottom
@@ -13,6 +13,31 @@
  *
  * Positioning: absolute inside `wysiwyg-root` (`position: relative`).
  * Blur guard: all interactive elements use onMouseDown={e=>e.preventDefault()}.
+ *
+ * GFM header-row invariant:
+ *   GFM tables always have exactly one header row (row 0 = all tableHeader
+ *   cells). The tiptap-markdown serialiser requires this invariant or it
+ *   falls back to the HTML serialiser (writing "[table]" when html:false).
+ *   Therefore:
+ *   - "Insert row above" is disabled when rowIdx === 0 (would insert above
+ *     the header, making the new body row become row 0).
+ *   - "Delete row" is disabled when rowIdx === 0 (deleting the header makes
+ *     the first body row become the new row 0, which is tableCell, not
+ *     tableHeader → serialiser sees a broken table).
+ *   - "Move row up" is disabled when rowIdx <= 1 (row 1 cannot move above
+ *     the header; row 0 is the header and must not move).
+ *   - "Move row down" is disabled when rowIdx === 0 (header must not move).
+ *   - "Toggle header row" has been removed (GFM tables always have a header).
+ *
+ * Per-instance menu state:
+ *   setDropdownOpen(editor, open) dispatches a 'menu' meta transaction so
+ *   the ProseMirror plugin can freeze hover updates while a menu is open
+ *   without using a module-level flag (which would affect all editor instances).
+ *
+ *   Additionally, on OPEN we snapshot the current rowIdx/colIdx into React
+ *   state.  All menu actions then use the snapshot, not live hover values —
+ *   this prevents the Radix portal / mouseleave race from changing the target
+ *   row/col between the user opening the menu and clicking an item.
  */
 
 import { useState, useEffect, useCallback } from 'react'
@@ -26,7 +51,6 @@ import {
   ArrowDownIcon,
   ArrowLeftIcon,
   ArrowRightIcon,
-  TableIcon,
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -43,7 +67,6 @@ import {
   moveRow,
   moveColumn,
   isRectangularTable,
-  runToggleHeaderRow,
 } from './commands'
 import { TableMap } from '@tiptap/pm/tables'
 
@@ -141,6 +164,15 @@ export function TableControls({ editor }: TableControlsProps) {
   const [rowMenuOpen, setRowMenuOpen] = useState(false)
   const [colMenuOpen, setColMenuOpen] = useState(false)
 
+  // Snapshots of row/col index at the moment the menu opens.
+  // We snapshot here so that mouse-leave during the menu (Radix portal in
+  // <body> makes the pointer leave the editor DOM) cannot change which
+  // row/col the menu actions target before the user clicks an item.
+  // The 0 defaults are never actually used: menus can only open when a
+  // hover snapshot is set (null-checked in handleRowOpenChange/handleColOpenChange).
+  const [rowMenuTarget, setRowMenuTarget] = useState<number>(0)
+  const [colMenuTarget, setColMenuTarget] = useState<number>(0)
+
   // Build a full OverlayState snapshot from the editor's current state
   const snapshotOverlay = useCallback(
     (tablePos: number | null, pluginState: TableControlsState | null): OverlayState => {
@@ -193,36 +225,39 @@ export function TableControls({ editor }: TableControlsProps) {
     }
   }, [editor, snapshotOverlay])
 
-  // Keep module-level dropdown flag in sync — called in event handlers only
-  const syncDropdown = useCallback((rowOpen: boolean, colOpen: boolean) => {
-    setDropdownOpen(rowOpen || colOpen)
-  }, [])
-
-  // Reset dropdown flag on unmount so it doesn't persist for the next editor instance
+  // Reset per-instance dropdown flag on unmount
   useEffect(() => {
-    return () => { setDropdownOpen(false) }
-  }, [])
+    return () => { setDropdownOpen(editor, false) }
+  }, [editor])
 
   const handleRowOpenChange = useCallback(
     (o: boolean) => {
       setRowMenuOpen(o)
-      syncDropdown(o, colMenuOpen)
+      // Dispatch per-instance menu-open meta (replaces old module-level flag)
+      setDropdownOpen(editor, o || colMenuOpen)
       const tp = overlay.plugin?.tablePos
       const rowIdx = overlay.plugin?.hover?.rowIdx
-      if (o && tp != null && rowIdx != null) selectRow(editor, tp, rowIdx)
+      if (o && tp != null && rowIdx != null) {
+        // Snapshot the target row now so menu actions use the stable value
+        setRowMenuTarget(rowIdx)
+        selectRow(editor, tp, rowIdx)
+      }
     },
-    [editor, overlay.plugin, colMenuOpen, syncDropdown],
+    [editor, overlay.plugin, colMenuOpen],
   )
 
   const handleColOpenChange = useCallback(
     (o: boolean) => {
       setColMenuOpen(o)
-      syncDropdown(rowMenuOpen, o)
+      setDropdownOpen(editor, rowMenuOpen || o)
       const tp = overlay.plugin?.tablePos
       const colIdx = overlay.plugin?.hover?.colIdx
-      if (o && tp != null && colIdx != null) selectColumn(editor, tp, colIdx)
+      if (o && tp != null && colIdx != null) {
+        setColMenuTarget(colIdx)
+        selectColumn(editor, tp, colIdx)
+      }
     },
-    [editor, overlay.plugin, rowMenuOpen, syncDropdown],
+    [editor, overlay.plugin, rowMenuOpen],
   )
 
   // Nothing to render
@@ -239,12 +274,15 @@ export function TableControls({ editor }: TableControlsProps) {
   const nRows = map?.height ?? 0
   const nCols = map?.width ?? 0
   const isRect = isRectangularTable(editor, tablePos)
-  const currentRow = pluginState.hover?.rowIdx ?? 0
-  const currentCol = pluginState.hover?.colIdx ?? 0
-  const isFirstRow = currentRow === 0
-  const isLastRow = currentRow === nRows - 1
-  const isFirstCol = currentCol === 0
-  const isLastCol = currentCol === nCols - 1
+
+  // Use snapshotted indices for all menu actions — never live hover
+  const currentRow = rowMenuOpen ? rowMenuTarget : (pluginState.hover?.rowIdx ?? 0)
+  const currentCol = colMenuOpen ? colMenuTarget : (pluginState.hover?.colIdx ?? 0)
+
+  const isHeaderRow  = currentRow === 0
+  const isLastRow    = currentRow === nRows - 1
+  const isFirstCol   = currentCol === 0
+  const isLastCol    = currentCol === nCols - 1
 
   const showRowHandle = rowHandleRect !== null && (rowMenuOpen || pluginState.hover !== null)
   const showColHandle = colHandleRect !== null && (colMenuOpen || pluginState.hover !== null)
@@ -269,16 +307,16 @@ export function TableControls({ editor }: TableControlsProps) {
   // ── Event guard: prevent editor blur ───────────────────────────────────────
   function noBlur(e: React.MouseEvent) { e.preventDefault() }
 
-  // ── Deferred action helpers ─────────────────────────────────────────────────
+  // ── Deferred action helpers (use snapshotted indices) ───────────────────────
   function handleRowAction(action: () => void) {
     setRowMenuOpen(false)
-    syncDropdown(false, colMenuOpen)
+    setDropdownOpen(editor, colMenuOpen)
     setTimeout(() => { editor.view.focus(); action() }, 0)
   }
 
   function handleColAction(action: () => void) {
     setColMenuOpen(false)
-    syncDropdown(rowMenuOpen, false)
+    setDropdownOpen(editor, rowMenuOpen)
     setTimeout(() => { editor.view.focus(); action() }, 0)
   }
 
@@ -310,11 +348,14 @@ export function TableControls({ editor }: TableControlsProps) {
             onCloseAutoFocus={(e) => { e.preventDefault(); editor.view.focus() }}
             className="min-w-[190px]"
           >
+            {/* Disabled on the header row: inserting above row 0 would push
+                the header down and break the GFM header-row invariant. */}
             <DropdownMenuItem
+              disabled={isHeaderRow}
               onSelect={() => handleRowAction(() => editor.chain().focus().addRowBefore().run())}
             >
               <Rows3Icon className="h-4 w-4 shrink-0" />
-              <span>Insert row above</span>
+              <span>{isHeaderRow ? 'Insert row above (header row)' : 'Insert row above'}</span>
             </DropdownMenuItem>
             <DropdownMenuItem
               onSelect={() => handleRowAction(() => editor.chain().focus().addRowAfter().run())}
@@ -323,38 +364,34 @@ export function TableControls({ editor }: TableControlsProps) {
               <span>Insert row below</span>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
+            {/* Move up: disabled for row 0 (header) and row 1 (would swap
+                body row 1 above the header, breaking the invariant). */}
             <DropdownMenuItem
-              disabled={!isRect || isFirstRow}
+              disabled={!isRect || currentRow <= 1}
               onSelect={() => handleRowAction(() => moveRow(editor, tablePos, currentRow, currentRow - 1))}
             >
               <ArrowUpIcon className="h-4 w-4 shrink-0" />
               <span>Move row up</span>
             </DropdownMenuItem>
+            {/* Move down: disabled for row 0 (header must not move). */}
             <DropdownMenuItem
-              disabled={!isRect || isLastRow}
+              disabled={!isRect || isHeaderRow || isLastRow}
               onSelect={() => handleRowAction(() => moveRow(editor, tablePos, currentRow, currentRow + 1))}
             >
               <ArrowDownIcon className="h-4 w-4 shrink-0" />
               <span>Move row down</span>
             </DropdownMenuItem>
-            {isFirstRow && (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onSelect={() => handleRowAction(() => runToggleHeaderRow(editor))}
-                >
-                  <TableIcon className="h-4 w-4 shrink-0" />
-                  <span>Toggle header row</span>
-                </DropdownMenuItem>
-              </>
-            )}
             <DropdownMenuSeparator />
+            {/* Delete row: disabled for the header row — deleting it makes the
+                first body row (tableCell) become row 0, breaking the invariant.
+                Delete the whole table instead. */}
             <DropdownMenuItem
+              disabled={isHeaderRow}
               className="text-destructive focus:text-destructive focus:bg-destructive/10"
               onSelect={() => handleRowAction(() => editor.chain().focus().deleteRow().run())}
             >
               <Trash2Icon className="h-4 w-4 shrink-0" />
-              <span>Delete row</span>
+              <span>{isHeaderRow ? 'Delete row (header — delete table instead)' : 'Delete row'}</span>
             </DropdownMenuItem>
             <DropdownMenuItem
               className="text-destructive focus:text-destructive focus:bg-destructive/10"

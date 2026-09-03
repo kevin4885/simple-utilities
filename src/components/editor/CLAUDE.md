@@ -352,7 +352,7 @@ The `virtualRef` is kept in a `useRef<Measurable>` updated via `useLayoutEffect`
 
 **TableForm** — 8×8 grid picker.
 - Hover/click to select dimensions; arrow keys for keyboard navigation.
-- Header row checkbox (default: true).
+- Tables are always inserted with `withHeaderRow: true` — the "Header row" checkbox has been removed (GFM tables always have a header row; inserting without one breaks the serialiser invariant).
 - Enter inserts, Escape cancels.
 - Pure reducer `nextSize(size, key)` in `forms/tableGrid.ts` handles clamped navigation.
 
@@ -505,7 +505,8 @@ interface TableControlsState {
 ### Handles
 
 **Row handle** (6×22px pill at 	ableRect.left - 14px, vertically centered on [data-row-handle] cell):
-- Click opens DropdownMenu: Insert row above, Insert row below, Move row up *(disabled if first row or non-rectangular)*, Move row down *(disabled if last row or non-rectangular)*, Toggle header row *(only for row 0)*, Delete row, Delete table.
+- Click opens DropdownMenu: Insert row above *(disabled on header row)*, Insert row below, Move row up *(disabled if rowIdx ≤ 1 or non-rectangular)*, Move row down *(disabled if rowIdx === 0 (header) or last row or non-rectangular)*, Delete row *(disabled on header row)*, Delete table.
+- "Toggle header row" has been removed — GFM tables always have a header row; removing it would break the serialiser invariant.
 
 **Column handle** (22×6px pill at 	ableRect.top - 14px, horizontally centered on [data-col-handle] cell):
 - Click opens DropdownMenu: Insert column left, Insert column right, Move column left *(disabled if first col or non-rectangular)*, Move column right *(disabled if last col or non-rectangular)*, Delete column, Delete table.
@@ -549,33 +550,90 @@ Tab / Shift-Tab cell navigation is handled by prosemirror-tables.
 ### Autolink / linkOnPaste
 
 `Link.configure({ autolink: true, linkOnPaste: true })` in `WysiwygEditor.tsx`:
-- **autolink**: typing `https://example.com ` (URL followed by space/newline) auto-converts it to a link mark. tiptap-markdown serialises it back as `[url](url)`.
+- **autolink**: typing `https://example.com ` (URL followed by space/newline) auto-converts it to a link mark.
+  - tiptap-markdown serialises an autolinked URL as **`<url>`** (GFM autolink form, via prosemirror-markdown's `isPlainURL` check) when the link text equals the href and the href has a scheme. A regular link with distinct text serialises as `[text](href)`.
 - **linkOnPaste**: pasting a URL over a selection links the selected text.
 - **linkify: false** is kept in `Markdown.configure` intentionally — we do NOT want the markdown parser to re-linkify plain-text URLs on every parse pass (that would silently mutate the user's source on each load).
+- **Suppressing autolink on programmatic setContent**: the value-sync `useEffect` uses `editor.chain().setMeta('preventAutolink', true).setContent(value, { emitUpdate: false }).run()` — this prevents the autolink appendTransaction from rewriting URLs in the first block when loading external content. The `preventAutolink` meta key is checked by the tiptap Link extension's appendTransaction (verified in `@tiptap/extension-link/dist/index.js`).
+
+### allowBase64 on Image extension
+
+`Image.configure({ allowBase64: true, … })` — enables data-URI images to survive the parse → serialise round-trip. With `allowBase64: false` (the old default), `parseHTML` filters out `img[src^="data:"]` nodes, silently deleting file-drop/paste images on the next `setContent` call.
 
 ### Error boundary (`wysiwyg/WysiwygErrorBoundary.tsx`)
 
-A class-component error boundary wrapping `<WysiwygEditor>` in the VME page.
+A class-component error boundary wrapping **only the wysiwyg panel** in the VME page.
+On error: logs, flushes pending edits, calls `onError` (page switches mode + shows banner), renders `null`.
+There is **no inline fallback notice** in the boundary — the page manages a `wysiwygError` banner state.
 
-**Usage:**
+**Usage (correct pattern):**
 ```tsx
 import { WysiwygErrorBoundary } from '@/components/editor/wysiwyg/WysiwygErrorBoundary'
 
-<WysiwygErrorBoundary
-  flushRef={wysiwygRef}   // RefObject<WysiwygEditorHandle | null>
-  onError={() => { setMode('markdown') }}   // switch mode on crash
-  onReset={() => { setMode('wysiwyg') }}    // switch back when user retries
->
-  {/* Wrap the ENTIRE editor area — not just the wysiwyg panel — so the
-      boundary stays mounted when onError switches mode. The fallback notice
-      remains visible until the user clicks "Try visual mode again". */}
-  {mode === 'wysiwyg' && <WysiwygEditor ref={wysiwygRef} … />}
-  {mode === 'markdown' && <CodeEditor … />}
-  {/* … other modes … */}
-</WysiwygErrorBoundary>
+// wysiwygError: boolean state + setWysiwygError in parent
+// Wrap ONLY the wysiwyg panel — not the full editor area.
+// The boundary unmounts when mode switches to 'markdown', so it
+// remounts clean when the user retries 'wysiwyg'.
+
+{mode === 'wysiwyg' && (
+  <WysiwygErrorBoundary
+    flushRef={wysiwygRef}
+    onError={() => { setEditorMode('markdown'); setWysiwygError(true) }}
+  >
+    <WysiwygEditor ref={wysiwygRef} … />
+  </WysiwygErrorBoundary>
+)}
+
+{/* Crash banner — shown above editor area when wysiwygError */}
+{wysiwygError && (
+  <div role="alert" …>
+    The visual editor hit a problem…
+    <button onClick={() => { setWysiwygError(false); setEditorMode('wysiwyg') }}>
+      Try visual mode again
+    </button>
+  </div>
+)}
+
+{mode === 'markdown' && <CodeEditor … />}
 ```
 
-**Note**: this boundary lives at the **page level** (VME tool), not inside WysiwygEditor itself — the editor component remains a pure WYSIWYG surface.
+**Note**: `onReset` prop removed. No reset plumbing needed — boundary remounts automatically when mode returns to `'wysiwyg'`.
+
+**Note**: boundary lives at the **page level** (VME tool), not inside WysiwygEditor itself.
+
+### GFM header-row invariant (tableControls)
+
+GFM tables always have exactly one header row (row 0 = all `tableHeader` nodes; rows 1+ = all `tableCell` nodes). tiptap-markdown's `isMarkdownSerializable` check enforces this. Violated tables fall back to the HTML serialiser which, with `html: false`, emits `[table]`.
+
+**Protected invariant:**
+- Tables are **always inserted with `withHeaderRow: true`** — the "Header row" checkbox has been removed from `TableForm`.
+- **"Insert row above"** is disabled when `rowIdx === 0` (would insert a body row above the header).
+- **"Delete row"** is disabled when `rowIdx === 0` (deleting the header makes the first body row become row 0).
+- **"Move row up"** is disabled when `rowIdx <= 1` (row 1 cannot move above the header; row 0 is the header).
+- **"Move row down"** is disabled when `rowIdx === 0` (header must never move).
+- **"Toggle header row"** has been removed — not a valid GFM operation.
+- `moveRow()` in `commands.ts` returns `false` (and leaves the doc unchanged) if `fromIdx === 0` or `toIdx === 0`.
+- Column operations (insert/delete/move) are always safe — they preserve row types.
+
+### Per-instance dropdown state (tableControls plugin)
+
+The module-level `_dropdownOpen` flag has been replaced with `menuOpen: boolean` in the ProseMirror plugin state. This makes the flag per-editor-instance (no global pollution when multiple editors mount).
+
+- `setDropdownOpen(editor, open)` dispatches `{ type: 'menu', open }` meta on `editor.view`. The plugin `apply()` handles this meta separately from `hover` metas.
+- `TableControls.tsx` calls `setDropdownOpen(editor, rowOpen || colOpen)` in `handleRowOpenChange`/`handleColOpenChange`.
+- `mouseleave` returns early when `pluginState.menuOpen` is true; the 150ms timer also rechecks before clearing.
+- `destroy()` no longer needs to reset a global flag.
+
+**Row/col index snapshot:** `TableControls` snapshots `rowIdx`/`colIdx` into `rowMenuTarget`/`colMenuTarget` React state when a menu opens. All menu-action callbacks use the snapshot instead of live hover values, preventing Radix portal mouse-leave from changing the target index between open and click.
+
+### testUtils (`wysiwyg/testUtils.ts`)
+
+Exports headless test helpers that use **the exact same extension config as WysiwygEditor**:
+- `buildCoreExtensions(opts?)` — returns the serialisation-relevant extension array
+- `createTestEditor(markdown)` — headless `Editor` with that config, pre-loaded with `markdown`
+- `getMarkdown(editor)` — serialises via tiptap-markdown storage
+
+**All new tests that need a headless editor MUST use `createTestEditor`** — not hand-rolled extension arrays that can silently diverge from the component config.
 
 ### Split mode
 

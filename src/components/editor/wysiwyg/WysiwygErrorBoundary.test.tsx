@@ -2,11 +2,15 @@
  * wysiwyg/WysiwygErrorBoundary.test.tsx
  *
  * Unit tests for WysiwygErrorBoundary.
- * Tests: fallback renders on throw, onError called, onReset called, reset restores children.
+ * Tests: fallback renders on throw, onError called, reset restores children.
+ *
+ * Post-fix (Issue 4): the boundary no longer renders an inline fallback notice.
+ * On error it renders null and calls onError (the page handles the banner and
+ * mode switch). Tests updated accordingly.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { createRef } from 'react'
 import { WysiwygErrorBoundary } from './WysiwygErrorBoundary'
 import type { WysiwygEditorHandle } from './WysiwygEditor'
@@ -43,14 +47,16 @@ describe('WysiwygErrorBoundary', () => {
     expect(screen.getByTestId('child')).toBeTruthy()
   })
 
-  it('renders fallback UI when child throws', () => {
-    render(
+  it('renders null (not a fallback notice) when child throws', () => {
+    const { container } = render(
       <WysiwygErrorBoundary>
         <ThrowingChild shouldThrow={true} />
       </WysiwygErrorBoundary>,
     )
-    expect(screen.getByText(/The visual editor hit a problem/)).toBeTruthy()
-    expect(screen.getByText('Try visual mode again')).toBeTruthy()
+    // Boundary renders null — the container should be empty
+    expect(container.firstChild).toBeNull()
+    // No "Try visual mode again" inside the boundary
+    expect(screen.queryByText('Try visual mode again')).toBeNull()
   })
 
   it('calls onError when child throws', () => {
@@ -64,17 +70,6 @@ describe('WysiwygErrorBoundary', () => {
     const [error] = onError.mock.calls[0]
     expect(error).toBeInstanceOf(Error)
     expect(error.message).toBe('Test render error')
-  })
-
-  it('calls onReset when "Try visual mode again" is clicked', () => {
-    const onReset = vi.fn()
-    render(
-      <WysiwygErrorBoundary onReset={onReset}>
-        <ThrowingChild shouldThrow={true} />
-      </WysiwygErrorBoundary>,
-    )
-    fireEvent.click(screen.getByText('Try visual mode again'))
-    expect(onReset).toHaveBeenCalledOnce()
   })
 
   it('calls flushRef.current.flush() when child throws', () => {
@@ -103,26 +98,12 @@ describe('WysiwygErrorBoundary', () => {
     ).not.toThrow()
   })
 
-  it('resets boundary when "Try visual mode again" is clicked', () => {
-    render(
-      <WysiwygErrorBoundary>
-        <ThrowingChild shouldThrow={true} />
-      </WysiwygErrorBoundary>,
-    )
-
-    // Fallback is visible
-    expect(screen.getByText(/The visual editor hit a problem/)).toBeTruthy()
-
-    // Click reset — ThrowingChild still throws, so boundary catches again
-    fireEvent.click(screen.getByText('Try visual mode again'))
-
-    // After reset, boundary renders children again (which still throw → shows fallback again)
-    // This verifies the internal state was cleared and children were re-rendered
-    expect(screen.getByText(/The visual editor hit a problem/)).toBeTruthy()
-  })
-
-  it('restores children after reset when child no longer throws', () => {
-    // We use a mutable flag to control whether the child throws
+  it('restores children after mode-driven remount when child no longer throws', () => {
+    // Simulate what the VME page does: on crash → mode switches to markdown
+    // (boundary unmounts), user clicks "Try again" → mode switches back to
+    // wysiwyg → a fresh boundary mounts around the wysiwyg panel.
+    // Here we just verify that after a crash, removing the erroring child and
+    // re-rendering produces a working tree.
     let shouldThrow = true
 
     function ControllableChild() {
@@ -130,18 +111,25 @@ describe('WysiwygErrorBoundary', () => {
       return <div data-testid="recovered-child">Recovered</div>
     }
 
-    render(
+    const { rerender } = render(
       <WysiwygErrorBoundary>
         <ControllableChild />
       </WysiwygErrorBoundary>,
     )
 
-    // Fallback shown
-    expect(screen.getByText(/The visual editor hit a problem/)).toBeTruthy()
+    // Error state — renders null
+    expect(screen.queryByTestId('recovered-child')).toBeNull()
 
-    // Stop throwing, then reset
+    // Simulate a fresh mount (what remounting via mode switch achieves)
     shouldThrow = false
-    fireEvent.click(screen.getByText('Try visual mode again'))
+    rerender(
+      // Wrapping in a different key forces a clean remount
+      <div key="remount">
+        <WysiwygErrorBoundary>
+          <ControllableChild />
+        </WysiwygErrorBoundary>
+      </div>,
+    )
 
     // Now child renders normally
     expect(screen.getByTestId('recovered-child')).toBeTruthy()

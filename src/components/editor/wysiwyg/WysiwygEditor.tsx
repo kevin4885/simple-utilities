@@ -212,6 +212,11 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
           },
         }),
         Image.configure({
+          // allowBase64: true so that data-URI images inserted via file-drop
+          // or paste are parsed back correctly on the next setContent call.
+          // With allowBase64: false (the default), parseHTML filters out
+          // img[src^="data:"] nodes, silently deleting them on round-trip.
+          allowBase64: true,
           HTMLAttributes: { class: 'wysiwyg-image max-w-full rounded' },
         }),
         Placeholder.configure({ placeholder }),
@@ -228,8 +233,10 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
         tableControlsExtension,
         ...(minimal ? [] : [slashExtension]),
       ],
+      // Include all values read inside the memo so hot-reloading and test
+      // rerenders don't silently stale-close over old prop values.
       // eslint-disable-next-line react-hooks/exhaustive-deps
-      [minimal],
+      [minimal, readOnly, placeholder],
     )
 
     // ── Debounce refs ──────────────────────────────────────────────────────
@@ -390,7 +397,21 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
         clearTimeout(debounceTimerRef.current)
         debounceTimerRef.current = null
       }
-      editor.commands.setContent(value, { emitUpdate: false })
+      // Suppress autolink on programmatic setContent:
+      //   Link's autolink appendTransaction runs on every transaction that
+      //   changes the document.  When we call setContent to sync an external
+      //   value prop change the transaction is NOT a user edit, so we must
+      //   pass `preventAutolink: true` meta — otherwise the autolink plugin
+      //   can rewrite URLs in the first block (e.g. the last word before a
+      //   paragraph break) and the next flush writes back a mutated string.
+      //
+      //   Implementation: chain().setMeta(...).setContent(...).run() so the
+      //   meta is attached to the same transaction that replaces the document.
+      editor
+        .chain()
+        .setMeta('preventAutolink', true)
+        .setContent(value, { emitUpdate: false })
+        .run()
       lastEmittedMd.current = value
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [value])

@@ -18,8 +18,17 @@
  *
  * Plugin state shape: TableControlsState (exported).
  *
- * Meta: tr.setMeta(tableControlsKey, { type: 'hover', rowIdx, colIdx })
- *   where rowIdx/colIdx may be null to clear hover.
+ * Meta types:
+ *   tr.setMeta(tableControlsKey, { type: 'hover', rowIdx, colIdx })
+ *     where rowIdx/colIdx may be null to clear hover.
+ *   tr.setMeta(tableControlsKey, { type: 'menu', open: boolean })
+ *     signals that a row/column dropdown has opened or closed.
+ *     This replaces the old module-level _dropdownOpen flag so each editor
+ *     instance manages its own menu state (no global pollution between
+ *     multiple mounted editors).
+ *
+ * setDropdownOpen(editor, open) — helper that dispatches the 'menu' meta;
+ *   call it from TableControls.tsx instead of the old exported flag setter.
  */
 
 import { Plugin, PluginKey } from '@tiptap/pm/state'
@@ -28,6 +37,7 @@ import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import type { EditorView } from '@tiptap/pm/view'
 import { CellSelection, TableMap, findTable } from '@tiptap/pm/tables'
 import type { Node } from '@tiptap/pm/model'
+import type { Editor } from '@tiptap/core'
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -39,11 +49,18 @@ export interface TableControlsMeta {
   colIdx: number | null
 }
 
+export interface TableControlsMenuMeta {
+  type: 'menu'
+  open: boolean
+}
+
 export interface TableControlsState {
   /** Position of the table node containing the selection, or null */
   tablePos: number | null
   /** Hovered cell inside the focused table, or null */
   hover: { rowIdx: number; colIdx: number } | null
+  /** True while a row/column dropdown menu is open (per-instance flag) */
+  menuOpen: boolean
   decorations: DecorationSet
 }
 
@@ -52,6 +69,27 @@ export interface TableControlsState {
 // ---------------------------------------------------------------------------
 
 export const tableControlsKey = new PluginKey<TableControlsState>('tableControls')
+
+// ---------------------------------------------------------------------------
+// setDropdownOpen — per-instance helper (replaces old module-level flag)
+// ---------------------------------------------------------------------------
+
+/**
+ * Dispatch a 'menu' meta on the editor to set/clear the per-instance
+ * menuOpen flag in plugin state. Replaces the old module-level
+ * _dropdownOpen variable so multiple editor instances don't interfere.
+ *
+ * Call from TableControls.tsx in handleRowOpenChange / handleColOpenChange.
+ */
+export function setDropdownOpen(editor: Editor, open: boolean): void {
+  if (editor.isDestroyed) return
+  editor.view.dispatch(
+    editor.view.state.tr.setMeta(tableControlsKey, {
+      type: 'menu',
+      open,
+    } satisfies TableControlsMenuMeta),
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Throttle (tiny, no lodash)
@@ -194,17 +232,6 @@ function resolveCellCoords(
 }
 
 // ---------------------------------------------------------------------------
-// Module-level dropdown flag — set by TableControls.tsx so mousemove
-// ignores events while a row/col menu is open.
-// ---------------------------------------------------------------------------
-
-let _dropdownOpen = false
-
-export function setDropdownOpen(open: boolean): void {
-  _dropdownOpen = open
-}
-
-// ---------------------------------------------------------------------------
 // Plugin factory
 // ---------------------------------------------------------------------------
 
@@ -212,10 +239,10 @@ export function createTableControlsPlugin(): Plugin<TableControlsState> {
   let hoverClearTimer: ReturnType<typeof setTimeout> | null = null
 
   const throttledMousemove = throttle((view: EditorView, event: MouseEvent) => {
-    if (_dropdownOpen) return
     if (view.isDestroyed) return
     const pluginState = tableControlsKey.getState(view.state)
-    if (!pluginState || pluginState.tablePos === null) return
+    // Skip updates while a dropdown menu is open (per-instance flag in state)
+    if (!pluginState || pluginState.menuOpen || pluginState.tablePos === null) return
 
     const coords = resolveCellCoords(view, event, pluginState.tablePos)
     const newRowIdx = coords?.rowIdx ?? null
@@ -249,21 +276,32 @@ export function createTableControlsPlugin(): Plugin<TableControlsState> {
         return {
           tablePos,
           hover: null,
+          menuOpen: false,
           decorations: buildDecorations(state.doc, tablePos, null),
         }
       },
 
       apply(tr, prev, _oldState, newState): TableControlsState {
-        const meta = tr.getMeta(tableControlsKey) as TableControlsMeta | undefined
+        const meta = tr.getMeta(tableControlsKey) as
+          | TableControlsMeta
+          | TableControlsMenuMeta
+          | undefined
+
+        if (meta?.type === 'menu') {
+          // Per-instance menu-open flag — hover state and decorations unchanged
+          return { ...prev, menuOpen: (meta as TableControlsMenuMeta).open }
+        }
 
         if (meta?.type === 'hover') {
+          const hoverMeta = meta as TableControlsMeta
           const hover =
-            meta.rowIdx !== null && meta.colIdx !== null
-              ? { rowIdx: meta.rowIdx, colIdx: meta.colIdx }
+            hoverMeta.rowIdx !== null && hoverMeta.colIdx !== null
+              ? { rowIdx: hoverMeta.rowIdx, colIdx: hoverMeta.colIdx }
               : null
           return {
             tablePos: prev.tablePos,
             hover,
+            menuOpen: prev.menuOpen,
             decorations: buildDecorations(newState.doc, prev.tablePos, hover),
           }
         }
@@ -275,7 +313,7 @@ export function createTableControlsPlugin(): Plugin<TableControlsState> {
           const decorations = (tr.docChanged || !sameTable)
             ? buildDecorations(newState.doc, tablePos, hover)
             : prev.decorations.map(tr.mapping, newState.doc)
-          return { tablePos, hover, decorations }
+          return { tablePos, hover, menuOpen: prev.menuOpen, decorations }
         }
 
         return prev
@@ -297,12 +335,19 @@ export function createTableControlsPlugin(): Plugin<TableControlsState> {
           const pluginState = tableControlsKey.getState(view.state)
           if (!pluginState || pluginState.hover === null) return false
 
+          // If a dropdown is open, the pointer may have left the editor DOM
+          // to reach the Radix portal in <body>. Do NOT clear hover — that
+          // would reset currentRow/currentCol before the menu action fires.
+          if (pluginState.menuOpen) return false
+
           if (hoverClearTimer !== null) clearTimeout(hoverClearTimer)
           hoverClearTimer = setTimeout(() => {
             hoverClearTimer = null
             if (view.isDestroyed) return
             const current = tableControlsKey.getState(view.state)
             if (!current || current.hover === null) return
+            // Re-check: don't clear if a menu was opened during the grace period
+            if (current.menuOpen) return
             view.dispatch(
               view.state.tr.setMeta(tableControlsKey, {
                 type: 'hover',
@@ -324,8 +369,6 @@ export function createTableControlsPlugin(): Plugin<TableControlsState> {
             clearTimeout(hoverClearTimer)
             hoverClearTimer = null
           }
-          // Reset module-level dropdown flag in case a menu was open at destroy time
-          _dropdownOpen = false
         },
       }
     },

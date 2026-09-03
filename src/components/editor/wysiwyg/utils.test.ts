@@ -6,11 +6,9 @@
  *   getLinkRange — walks the link mark extent at the cursor
  */
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, afterEach } from 'vitest'
 import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
-import { Link } from '@tiptap/extension-link'
-import { Markdown } from 'tiptap-markdown'
 import { TextSelection } from '@tiptap/pm/state'
 import { normalizeUrl, getLinkRange } from './utils'
 
@@ -175,52 +173,33 @@ describe('getLinkRange', () => {
 // When Link is configured with autolink: true and the user types a URL that
 // becomes a link mark, tiptap-markdown must serialise it back to a link.
 // We simulate this by inserting a link mark directly and checking serialisation.
+//
+// These tests now use createTestEditor() from testUtils so they exercise the
+// real component config (including allowBase64, Markdown options, etc.).
 // ---------------------------------------------------------------------------
 
-describe('link mark round-trip through tiptap-markdown', () => {
-  it('link mark survives markdown serialisation (autolink-style URL)', () => {
+import { createTestEditor, getMarkdown } from './testUtils'
+
+describe('link mark round-trip through tiptap-markdown (real config)', () => {
+  let editor2: import('@tiptap/core').Editor
+
+  afterEach(() => { editor2?.destroy() })
+
+  it('link mark with text === href serialises as GFM autolink <url>', () => {
+    // isPlainURL check in prosemirror-markdown: when text === href and href has
+    // a scheme (^\w+:), the link serialises as <url> not [url](url).
+    // NOTE: CLAUDE.md claim "[url](url)" was wrong — it is "<url>".
     const md = '[https://example.com](https://example.com)'
-    const editor = new Editor({
-      extensions: [
-        StarterKit.configure({ link: false }),
-        Link.configure({ autolink: true, linkOnPaste: true }),
-        Markdown.configure({ html: false }),
-      ],
-      content: md,
-    })
-
-    const storage = editor.storage as unknown as Record<
-      string,
-      { getMarkdown?: () => string } | undefined
-    >
-    const serialized = storage.markdown?.getMarkdown?.() ?? ''
-    editor.destroy()
-
-    // Either [url](url) or <url> autolink form — both are valid markdown links
-    const hasLink =
-      serialized.includes('https://example.com') &&
-      (serialized.includes('[') || serialized.includes('<'))
-    expect(hasLink).toBe(true)
+    editor2 = createTestEditor(md)
+    const serialized = getMarkdown(editor2)
+    // Should serialise as <url> (GFM autolink)
+    expect(serialized).toContain('<https://example.com>')
   })
 
-  it('regular link mark round-trips through tiptap-markdown', () => {
+  it('regular link mark with different text round-trips as [text](href)', () => {
     const md = '[Visit Example](https://example.com)'
-    const editor = new Editor({
-      extensions: [
-        StarterKit.configure({ link: false }),
-        Link.configure({ autolink: true, linkOnPaste: true }),
-        Markdown.configure({ html: false }),
-      ],
-      content: md,
-    })
-
-    const storage = editor.storage as unknown as Record<
-      string,
-      { getMarkdown?: () => string } | undefined
-    >
-    const serialized = storage.markdown?.getMarkdown?.() ?? ''
-    editor.destroy()
-
+    editor2 = createTestEditor(md)
+    const serialized = getMarkdown(editor2)
     expect(serialized).toContain('Visit Example')
     expect(serialized).toContain('https://example.com')
   })

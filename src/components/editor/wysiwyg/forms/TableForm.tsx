@@ -9,13 +9,18 @@
  *  - Arrow keys move the highlighted size (via tableGrid.ts reducer)
  *  - Enter inserts at the highlighted size
  *  - Escape cancels
- *  - "Header row" checkbox
  *  - Live label showing "3 × 4"
+ *
+ * GFM header-row invariant:
+ *   Tables are always inserted with a header row (withHeaderRow: true).
+ *   The "Header row" checkbox has been removed — GFM tables require exactly
+ *   one header row; inserting without one produces a table whose first row
+ *   consists of tableCell nodes, which tiptap-markdown cannot serialise as
+ *   GFM markdown (it falls back to the HTML serialiser and writes "[table]"
+ *   when html:false). See tableControls/commands.ts for full invariant notes.
  */
 
 import { useState, useRef, useEffect } from 'react'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 import { nextSize, TABLE_GRID_MAX } from './tableGrid'
 import type { TableGridSize } from './tableGrid'
@@ -35,8 +40,7 @@ interface TableFormProps {
 
 export function TableForm({ onInsert, onClose }: TableFormProps) {
   const [hovered, setHovered] = useState<TableGridSize>({ rows: 1, cols: 1 })
-  const [withHeaderRow, setWithHeaderRow] = useState(true)
-  // gridRef used to capture arrow-key focus without stealing from the checkbox
+  // gridRef used to capture arrow-key focus
   const gridRef = useRef<HTMLDivElement>(null)
 
   // Focus the grid on mount for immediate keyboard control
@@ -45,7 +49,8 @@ export function TableForm({ onInsert, onClose }: TableFormProps) {
   }, [])
 
   function handleInsert(rows: number, cols: number) {
-    onInsert(rows, cols, withHeaderRow)
+    // Always pass withHeaderRow: true — GFM tables require a header row.
+    onInsert(rows, cols, true)
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -113,18 +118,6 @@ export function TableForm({ onInsert, onClose }: TableFormProps) {
             }),
           )}
         </div>
-      </div>
-
-      {/* Header row checkbox */}
-      <div className="flex items-center gap-2">
-        <Checkbox
-          id="wysiwyg-table-header"
-          checked={withHeaderRow}
-          onCheckedChange={(checked) => setWithHeaderRow(checked === true)}
-        />
-        <Label htmlFor="wysiwyg-table-header" className="text-xs cursor-pointer">
-          Header row
-        </Label>
       </div>
 
       <p className="text-[10px] text-muted-foreground leading-tight -mt-1">

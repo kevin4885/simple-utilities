@@ -2,15 +2,30 @@
  * tableControls/commands.ts
  *
  * Pure command helpers for the table-controls overlay:
- *   selectRow   — builds CellSelection.rowSelection for the given row
- *   selectColumn — builds CellSelection.colSelection for the given column
- *   moveRow     — reorders rows in the table using prosemirror-tables moveTableRow
- *   moveColumn  — reorders columns using moveTableColumn
+ *   selectRow      — builds CellSelection.rowSelection for the given row
+ *   selectColumn   — builds CellSelection.colSelection for the given column
+ *   moveRow        — reorders rows in the table using prosemirror-tables moveTableRow
+ *   moveColumn     — reorders columns using moveTableColumn
+ *   isRectangularTable — guard: all cells span=1, move ops are safe
  *
- * Assumptions:
- *   GFM markdown produces rectangular tables with no colspan/rowspan > 1.
- *   If TableMap reports any cell with span > 1, move operations are disabled
- *   (guard via canMoveRows / canMoveColumns helpers).
+ * GFM header-row invariant
+ * ────────────────────────
+ * GFM markdown requires the first row of every table to consist entirely of
+ * tableHeader nodes; all subsequent rows must be tableCell nodes.
+ * tiptap-markdown's table serialiser (isMarkdownSerializable) checks this:
+ * if violated it falls back to HTMLNode.serialize which, with html:false,
+ * writes the literal string "[table]".
+ *
+ * To protect the invariant moveRow now guards:
+ *   - fromIdx === 0: the header row must never move (returns false).
+ *   - toIdx === 0  : moving any body row to position 0 would make it the
+ *                    header — forbidden (returns false).
+ *
+ * Toggle-header-row has been removed entirely:
+ *   GFM tables always have a header row; "toggle header" is not a valid
+ *   operation in the GFM model and produced broken serialisation.
+ *   Column operations (insert/delete/move column) are always safe because
+ *   whole-column operations preserve the type of every cell in each row.
  */
 
 import type { Editor } from '@tiptap/core'
@@ -20,7 +35,6 @@ import {
   findTable,
   moveTableRow,
   moveTableColumn,
-  toggleHeaderRow,
 } from '@tiptap/pm/tables'
 
 // ---------------------------------------------------------------------------
@@ -123,6 +137,10 @@ export function isRectangularTable(editor: Editor, tablePos: number): boolean {
  * Moves the row at `fromIdx` to `toIdx` within the table at `tablePos`.
  * Uses prosemirror-tables' moveTableRow command (available in v1.5+).
  * Returns true if dispatched.
+ *
+ * GFM invariant guards (returns false without mutating):
+ *   fromIdx === 0  — header row must never move.
+ *   toIdx === 0    — no body row may move into position 0 (header slot).
  */
 export function moveRow(
   editor: Editor,
@@ -132,6 +150,10 @@ export function moveRow(
 ): boolean {
   if (fromIdx === toIdx) return false
   if (!isRectangularTable(editor, tablePos)) return false
+
+  // GFM header-row invariant: row 0 is the header; it must not move, and
+  // no body row may take position 0.
+  if (fromIdx === 0 || toIdx === 0) return false
 
   const { state, dispatch } = editor.view
   const tableNode = state.doc.nodeAt(tablePos)
@@ -158,6 +180,8 @@ export function moveRow(
 /**
  * Moves the column at `fromIdx` to `toIdx` within the table at `tablePos`.
  * Returns true if dispatched.
+ * Column operations are always safe: they do not change which row is the
+ * header (row types are preserved across column reorders).
  */
 export function moveColumn(
   editor: Editor,
@@ -184,19 +208,6 @@ export function moveColumn(
   } catch {
     return false
   }
-}
-
-// ---------------------------------------------------------------------------
-// Toggle header row
-// ---------------------------------------------------------------------------
-
-/**
- * Runs the prosemirror-tables toggleHeaderRow command.
- * Only meaningful when the selection is in the first row.
- */
-export function runToggleHeaderRow(editor: Editor): boolean {
-  const { state, dispatch } = editor.view
-  return toggleHeaderRow(state, dispatch)
 }
 
 // ---------------------------------------------------------------------------

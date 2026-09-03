@@ -557,18 +557,27 @@ export default function VisualMarkdownEditorPage() {
     if (mode !== 'preview') {
       prevNonPreviewMode.current = mode
     }
+    // Clear the crash banner when leaving markdown mode (e.g. via toolbar)
+    // so it doesn't linger in other modes.
+    if (wysiwygError && newMode !== 'markdown') {
+      setWysiwygError(false)
+    }
     setEditorMode(newMode)
   }
 
   // ── Error boundary handler ─────────────────────────────────────────────────
 
+  const [wysiwygError, setWysiwygError] = useState(false)
+
   function handleWysiwygError() {
-    // Boundary already flushed; just switch to markdown mode so content is visible
+    // Boundary already flushed; switch to markdown mode and show the banner
     setEditorMode('markdown')
+    setWysiwygError(true)
   }
 
-  function handleWysiwygReset() {
-    // User clicked "Try visual mode again" — re-enter wysiwyg mode
+  function handleWysiwygRetry() {
+    // Clear error banner and re-enter wysiwyg — a fresh boundary mounts
+    setWysiwygError(false)
     setEditorMode('wysiwyg')
   }
 
@@ -741,73 +750,96 @@ export default function VisualMarkdownEditorPage() {
   )
 
   const editorArea = (
-    <WysiwygErrorBoundary
-      flushRef={wysiwygRef as RefObject<WysiwygEditorHandle | null>}
-      onError={handleWysiwygError}
-      onReset={handleWysiwygReset}
-    >
-      <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-        {/* Empty-doc first-run hint — only shown in wysiwyg mode */}
+    <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+      {/* Crash banner — compact strip above the editor; shown after a wysiwyg
+          render crash, dismissed when user retries visual mode. */}
+      {wysiwygError && (
+        <div
+          role="alert"
+          className="shrink-0 flex items-center justify-between gap-3 px-4 py-2 border-b border-destructive/30 bg-destructive/10 text-sm text-foreground"
+        >
+          <span>
+            The visual editor hit a problem and switched to Markdown mode.
+            Your content is safe.
+          </span>
+          <button
+            className="shrink-0 rounded-md border border-border bg-background px-3 py-1 text-xs hover:bg-muted transition-colors whitespace-nowrap"
+            onClick={handleWysiwygRetry}
+          >
+            Try visual mode again
+          </button>
+        </div>
+      )}
+
+      {/* Empty-doc first-run hint — only shown in wysiwyg mode */}
+      {mode === 'wysiwyg' && (
+        <EmptyHint
+          content={activeDoc.content}
+          dismissed={hintDismissed}
+          onDismiss={dismissHint}
+        />
+      )}
+
+      <div className="flex-1 min-h-0 overflow-hidden">
+        {/* Wysiwyg panel — boundary wraps ONLY this panel so on crash the
+            mode switches to markdown and the CodeEditor below becomes visible. */}
         {mode === 'wysiwyg' && (
-          <EmptyHint
-            content={activeDoc.content}
-            dismissed={hintDismissed}
-            onDismiss={dismissHint}
-          />
+          <WysiwygErrorBoundary
+            flushRef={wysiwygRef as RefObject<WysiwygEditorHandle | null>}
+            onError={handleWysiwygError}
+          >
+            {wysiwygPanel}
+          </WysiwygErrorBoundary>
         )}
 
-        <div className="flex-1 min-h-0 overflow-hidden">
-          {mode === 'wysiwyg' && wysiwygPanel}
-
-          {mode === 'markdown' && (
-            <div className="h-full overflow-hidden">
-              <CodeEditor
-                value={activeDoc.content}
-                onChange={handleContentChange}
-                language="markdown"
-                height="100%"
-                className="h-full"
-                placeholder="Write markdown here…"
-                basicSetup={{ lineNumbers: false, foldGutter: false, highlightActiveLine: true, history: true }}
-              />
-            </div>
-          )}
-
-          {mode === 'preview' && (
-            <div className="h-full overflow-y-auto px-5 py-4">
-              <MarkdownRenderer content={activeDoc.content} />
-            </div>
-          )}
-
-          {mode === 'split' && (
-            <ResizablePanelGroup
-              orientation={isDesktop ? 'horizontal' : 'vertical'}
+        {mode === 'markdown' && (
+          <div className="h-full overflow-hidden">
+            <CodeEditor
+              value={activeDoc.content}
+              onChange={handleContentChange}
+              language="markdown"
+              height="100%"
               className="h-full"
-            >
-              <ResizablePanel defaultSize={50} minSize={25}>
-                <div className="h-full overflow-hidden">
-                  <CodeEditor
-                    value={activeDoc.content}
-                    onChange={handleContentChange}
-                    language="markdown"
-                    height="100%"
-                    className="h-full"
-                    placeholder="Write markdown here…"
-                    basicSetup={{ lineNumbers: false, foldGutter: false, highlightActiveLine: true, history: true }}
-                  />
-                </div>
-              </ResizablePanel>
-              <ResizableHandle withHandle />
-              <ResizablePanel defaultSize={50} minSize={25}>
-                <div className="h-full overflow-y-auto px-5 py-4">
-                  <MarkdownRenderer content={activeDoc.content} />
-                </div>
-              </ResizablePanel>
-            </ResizablePanelGroup>
-          )}
-        </div>
+              placeholder="Write markdown here…"
+              basicSetup={{ lineNumbers: false, foldGutter: false, highlightActiveLine: true, history: true }}
+            />
+          </div>
+        )}
+
+        {mode === 'preview' && (
+          <div className="h-full overflow-y-auto px-5 py-4">
+            <MarkdownRenderer content={activeDoc.content} />
+          </div>
+        )}
+
+        {mode === 'split' && (
+          <ResizablePanelGroup
+            orientation={isDesktop ? 'horizontal' : 'vertical'}
+            className="h-full"
+          >
+            <ResizablePanel defaultSize={50} minSize={25}>
+              <div className="h-full overflow-hidden">
+                <CodeEditor
+                  value={activeDoc.content}
+                  onChange={handleContentChange}
+                  language="markdown"
+                  height="100%"
+                  className="h-full"
+                  placeholder="Write markdown here…"
+                  basicSetup={{ lineNumbers: false, foldGutter: false, highlightActiveLine: true, history: true }}
+                />
+              </div>
+            </ResizablePanel>
+            <ResizableHandle withHandle />
+            <ResizablePanel defaultSize={50} minSize={25}>
+              <div className="h-full overflow-y-auto px-5 py-4">
+                <MarkdownRenderer content={activeDoc.content} />
+              </div>
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        )}
       </div>
-    </WysiwygErrorBoundary>
+    </div>
   )
 
   // ── Full layout ────────────────────────────────────────────────────────────

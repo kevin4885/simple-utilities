@@ -39,10 +39,12 @@ npm run format       # Format
 ```
 src/
   app/              # Shell: Layout, routing, Header, theme toggle, CommandPalette
-  lib/              # cn() helper, Zustand theme store, search.ts (Fuse.js tool search)
+  lib/              # cn() helper, Zustand theme store, search.ts (Fuse.js tool search), useMediaQuery.ts, useDebouncedValue.ts
   components/
     ui/             # shadcn/ui components — source of truth is the files themselves
     editor/         # Shared editor components: CodeEditor, MarkdownRenderer (see editor/CLAUDE.md)
+                    #   wysiwyg/ — TipTap WYSIWYG editor + extensions, toolbar, menus, forms
+                    #   wysiwyg/WysiwygErrorBoundary.tsx — error boundary for WYSIWYG crashes
   tools/
     registry.ts     # THE source of truth for all tools, routes, and nav
     <category>/

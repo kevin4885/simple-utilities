@@ -26,15 +26,23 @@ const DocSchema = z.object({
 
 const ModelSchema = z.enum(['gpt4o', 'claude', 'gemini'])
 
+/** Phase 4: added editorMode and hintDismissed to persisted state. */
+const EditorModeSchema = z.enum(['wysiwyg', 'markdown', 'preview', 'split'])
+
 const PersistedSchema = z.object({
   docs: z.array(DocSchema).min(1),
   activeDocId: z.string().min(1),
   selectedModel: ModelSchema,
+  /** Persisted editor mode (Phase 4). Defaults to 'wysiwyg' on old state. */
+  editorMode: EditorModeSchema.optional(),
+  /** Whether the empty-doc first-run hint has been dismissed (Phase 4). */
+  hintDismissed: z.boolean().optional(),
 })
 
 export type VmeVersion = z.infer<typeof VersionSchema>
 export type VmeDoc    = z.infer<typeof DocSchema>
 export type VmeModel  = z.infer<typeof ModelSchema>
+export type VmeEditorMode = z.infer<typeof EditorModeSchema>
 
 // ---------------------------------------------------------------------------
 // Store interface
@@ -44,12 +52,18 @@ interface VmeState {
   docs: VmeDoc[]
   activeDocId: string
   selectedModel: VmeModel
+  /** Persisted editor mode. Default 'wysiwyg'. */
+  editorMode: VmeEditorMode
+  /** Whether the first-run hint has been dismissed. */
+  hintDismissed: boolean
 
   createDoc:   () => void
   deleteDoc:   (id: string) => void
   updateDoc:   (id: string, patch: Partial<Pick<VmeDoc, 'title' | 'content'>>) => void
   setActiveDoc:(id: string) => void
   setModel:    (m: VmeModel) => void
+  setEditorMode: (mode: VmeEditorMode) => void
+  dismissHint:   () => void
 
   /**
    * Capture the current content of `docId` as a new version entry.
@@ -78,9 +92,9 @@ function makeDoc(title: string): VmeDoc {
   }
 }
 
-function fallbackState(): Pick<VmeState, 'docs' | 'activeDocId' | 'selectedModel'> {
+function fallbackState(): Pick<VmeState, 'docs' | 'activeDocId' | 'selectedModel' | 'editorMode' | 'hintDismissed'> {
   const doc = makeDoc('Untitled 1')
-  return { docs: [doc], activeDocId: doc.id, selectedModel: 'gpt4o' }
+  return { docs: [doc], activeDocId: doc.id, selectedModel: 'gpt4o', editorMode: 'wysiwyg', hintDismissed: false }
 }
 
 // ---------------------------------------------------------------------------
@@ -121,6 +135,14 @@ export const useVmeStore = create<VmeState>()(
 
       setModel(m: VmeModel) {
         set({ selectedModel: m })
+      },
+
+      setEditorMode(mode: VmeEditorMode) {
+        set({ editorMode: mode })
+      },
+
+      dismissHint() {
+        set({ hintDismissed: true })
       },
 
       saveVersion(docId: string, opts = {}) {
@@ -203,9 +225,17 @@ export const useVmeStore = create<VmeState>()(
       merge(persisted, current) {
         const result = PersistedSchema.safeParse(persisted)
         if (!result.success) return current
-        const { docs, activeDocId, selectedModel } = result.data
+        const { docs, activeDocId, selectedModel, editorMode, hintDismissed } = result.data
         const validId = docs.find((d) => d.id === activeDocId) ? activeDocId : docs[0].id
-        return { ...current, docs, activeDocId: validId, selectedModel }
+        return {
+          ...current,
+          docs,
+          activeDocId: validId,
+          selectedModel,
+          // Phase 4 fields: fall back to defaults if missing from old persisted state
+          editorMode: editorMode ?? 'wysiwyg',
+          hintDismissed: hintDismissed ?? false,
+        }
       },
     },
   ),

@@ -196,6 +196,15 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
         TaskItem.configure({ nested: true }),
         Link.configure({
           openOnClick: readOnly,
+          // autolink: typing "https://example.com " auto-converts the URL to a
+          // link mark; linkOnPaste: pasting a URL over a selection links it.
+          // Both are safe to enable alongside tiptap-markdown because the
+          // serialiser round-trips any link mark back to [text](href) form.
+          // NOTE: Markdown.configure({ linkify: false }) is intentionally kept
+          // false — we do NOT want the parser to re-linkify plain-text URLs on
+          // every parse pass (that would silently mutate the user's source).
+          autolink: true,
+          linkOnPaste: true,
           HTMLAttributes: {
             class: 'wysiwyg-link',
             rel: 'noopener noreferrer',

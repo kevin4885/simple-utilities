@@ -11,4 +11,4 @@ export type { WysiwygEditorHandle, WysiwygEditorProps } from './wysiwyg/WysiwygE
 
 // Named exports that tests / other files import from the old location
 export { MARKDOWN_LINK_REGEX } from './wysiwyg/extensions/linkKeyboard'
-export { normalizeUrl } from './wysiwyg-utils'
+export { normalizeUrl } from './wysiwyg/utils'

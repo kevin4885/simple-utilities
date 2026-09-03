@@ -27,14 +27,15 @@ export {
 // ---------------------------------------------------------------------------
 
 /**
- * Derive a display mode label for the three-way mode toggle.
+ * Derive a display mode label for the four-way mode toggle.
  * Returns the human-readable label for each mode id.
  */
-export function getModeLabel(mode: 'wysiwyg' | 'markdown' | 'preview'): string {
+export function getModeLabel(mode: 'wysiwyg' | 'markdown' | 'preview' | 'split'): string {
   switch (mode) {
     case 'wysiwyg':   return 'Visual'
     case 'markdown':  return 'Markdown'
     case 'preview':   return 'Preview'
+    case 'split':     return 'Split'
   }
 }
 
@@ -76,10 +77,12 @@ export interface ShortcutEntry {
  *   @tiptap/extension-list (via StarterKit BulletList)  — Mod-Shift-8
  *   @tiptap/extension-list (via StarterKit OrderedList) — Mod-Shift-7
  *   @tiptap/extension-task-list     — no keyboard shortcut bound by default
+ *   @tiptap/extension-list ListItem — Tab (sinkListItem), Shift-Tab (liftListItem)
  *   linkKeyboard extension          — Mod-k, Mod-Shift-k
  *   linkKeyboard extension (table)  — Mod-Enter, Mod-Shift-Enter,
  *                                     Mod-Alt-←/→/Backspace
  *   undo/redo                       — Ctrl+Z / Ctrl+Shift+Z (StarterKit UndoRedo)
+ *   VME page (Phase 4)              — Ctrl+Shift+P toggles preview
  */
 export const KEYBOARD_SHORTCUTS: ShortcutEntry[] = [
   // ── Text formatting ─────────────────────────────────────────────────────
@@ -102,6 +105,10 @@ export const KEYBOARD_SHORTCUTS: ShortcutEntry[] = [
   // ── Lists ────────────────────────────────────────────────────────────────
   { category: 'Lists',      keys: 'Ctrl+Shift+8',             description: 'Bullet list' },
   { category: 'Lists',      keys: 'Ctrl+Shift+7',             description: 'Ordered list' },
+  // Tab/Shift+Tab indent: verified in @tiptap/extension-list ListItem source
+  // (ListItem.addKeyboardShortcuts: Tab → sinkListItem, Shift-Tab → liftListItem)
+  { category: 'Lists',      keys: 'Tab',                       description: 'Indent list item (inside list)' },
+  { category: 'Lists',      keys: 'Shift+Tab',                 description: 'Outdent list item (inside list)' },
   // ── Links ───────────────────────────────────────────────────────────────
   { category: 'Links',      keys: 'Ctrl+K / Cmd+K',           description: 'Insert / edit link' },
   { category: 'Links',      keys: 'Ctrl+Shift+K',             description: 'Remove link (unlink)' },
@@ -112,8 +119,15 @@ export const KEYBOARD_SHORTCUTS: ShortcutEntry[] = [
   { category: 'Tables',     keys: 'Ctrl+Alt+→',               description: 'Add column after' },
   { category: 'Tables',     keys: 'Ctrl+Alt+←',               description: 'Add column before' },
   { category: 'Tables',     keys: 'Ctrl+Alt+Backspace',        description: 'Delete row' },
-  // ── Slash commands ───────────────────────────────────────────────────────
+  // ── View ────────────────────────────────────────────────────────────────
+  { category: 'View',       keys: 'Ctrl+Shift+P / Cmd+Shift+P', description: 'Toggle Preview mode (returns to previous mode)' },
+  // ── Selection toolbar ────────────────────────────────────────────────────
+  { category: 'Selection',  keys: 'Select text',               description: 'Show inline formatting toolbar (bold, italic, link…)' },
+  // ── Table controls ───────────────────────────────────────────────────────
+  { category: 'Selection',  keys: 'Hover a table row/column',  description: 'Show row/column handle menu (insert, delete, move)' },
+  // ── Popups / menus ───────────────────────────────────────────────────────
   { category: 'Commands',   keys: '/',                         description: 'Open slash-command menu' },
+  { category: 'Commands',   keys: 'Escape',                    description: 'Close any open popup or menu' },
   // ── Markdown auto-conversion (input rules) ───────────────────────────────
   { category: 'Auto',       keys: '# ',                        description: 'Heading 1' },
   { category: 'Auto',       keys: '## ',                       description: 'Heading 2' },

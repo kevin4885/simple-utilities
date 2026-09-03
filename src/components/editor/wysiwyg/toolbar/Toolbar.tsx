@@ -225,7 +225,7 @@ function ListButtonEntry({ entry, flags, editor, actions }: ListButtonEntryProps
         <TooltipContent side="bottom" sideOffset={4}>
           {tooltipLabel}
         </TooltipContent>
-        <DropdownMenuContent align="start" className="min-w-[180px]">
+        <DropdownMenuContent align="start" className="min-w-[180px]" onCloseAutoFocus={(e) => { e.preventDefault(); editor.commands.focus() }}>
           {entry.items.map((item) => {
             const Icon = item.icon
             const flag = flags[item.id] ?? { active: false, enabled: true }
@@ -234,7 +234,7 @@ function ListButtonEntry({ entry, flags, editor, actions }: ListButtonEntryProps
               <DropdownMenuItem
                 key={item.id}
                 disabled={!flag.enabled}
-                onSelect={() => item.exec(editor, actions)}
+                onSelect={() => { item.exec(editor, actions); editor.commands.focus() }}
                 className={flag.active ? 'bg-accent/50' : ''}
                 data-item-id={item.id}
               >

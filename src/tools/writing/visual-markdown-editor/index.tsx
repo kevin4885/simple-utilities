@@ -1,30 +1,31 @@
 /**
  * Visual Markdown Editor — WYSIWYG editor tool page
  *
+ * Modes (via ToggleGroup, persisted in store):
+ *   Visual    → WysiwygEditor (TipTap) — rich text with toolbar + floating toolbar
+ *   Markdown  → CodeEditor (CodeMirror, language="markdown")
+ *   Preview   → MarkdownRenderer (read-only)
+ *   Split     → ResizablePanelGroup: CodeEditor (left) | MarkdownRenderer (right)
+ *               Below md breakpoint falls back to vertical split direction.
+ *
+ * All modes share the same markdown string from the store (single source of truth).
+ * Switching modes never loses content. WysiwygEditor flushes pending onChange before
+ * unmounting (via wysiwygRef.current?.flush()).
+ *
+ * Error boundary (Phase 4):
+ *   WysiwygEditor is wrapped in WysiwygErrorBoundary. On any render crash the
+ *   boundary catches, flushes pending edits, calls onError → mode switches to
+ *   'markdown', and shows a brief inline notice.
+ *
+ * Keyboard shortcuts:
+ *   Ctrl+Shift+P / Cmd+Shift+P — toggles between current editing mode and 'preview'
+ *   (remembers previous mode to return to).
+ *
  * Layout:
  *   Desktop (md+):
- *     [Center: mode switcher + editor area (with formatting toolbar)] [Right: collapsible doc list]
+ *     [Center: mode switcher + editor area] [Right: collapsible doc list]
  *   Mobile (<md):
- *     Toolbar (mode switcher + actions) + editor area stacked, docs in Sheet
- *
- * Three editing modes via ToggleGroup:
- *   Visual    → WysiwygEditor (TipTap) with sticky formatting toolbar and floating
- *               selection toolbar — mounted only when active
- *   Markdown  → CodeEditor (CodeMirror, language="markdown") — mounted only when active
- *   Preview   → MarkdownRenderer — mounted only when active
- *
- * All three modes share the same markdown string from the store.
- * Switching modes never loses content (content is in the store; WysiwygEditor
- * flushes its pending debounced onChange before unmounting).
- *
- * Keyboard shortcuts dialog: the ? button opens a shadcn Dialog listing
- * all verified shortcuts.
- *
- * Phase 1 changes:
- *   - Removed the left "Components" palette (ComponentPalette, PALETTE_GROUPS).
- *     Formatting is now done via the WysiwygEditor toolbar (header) and the
- *     floating selection toolbar.
- *   - Desktop layout is now: [center editor][right docs] (2-pane).
+ *     Toolbar (mode switcher + actions) + editor area stacked; docs in Sheet
  */
 
 import {
@@ -33,6 +34,7 @@ import {
   useRef,
   useCallback,
   useMemo,
+  type RefObject,
 } from 'react'
 import {
   ChevronLeft,
@@ -48,10 +50,13 @@ import {
   Layers,
   Eye,
   Code2,
+  Columns2,
   KeyboardIcon,
+  X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useDebouncedValue } from '@/lib/useDebouncedValue'
+import { useMediaQuery } from '@/lib/useMediaQuery'
 import { Button } from '@/components/ui/button'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
@@ -74,9 +79,15 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import { Separator } from '@/components/ui/separator'
+import {
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle,
+} from '@/components/ui/resizable'
 import WysiwygEditor, { type WysiwygEditorHandle } from '@/components/editor/WysiwygEditor'
 import CodeEditor from '@/components/editor/CodeEditor'
 import MarkdownRenderer from '@/components/editor/MarkdownRenderer'
+import { WysiwygErrorBoundary } from '@/components/editor/wysiwyg/WysiwygErrorBoundary'
 import {
   countTokensGpt,
   countTokensApprox,
@@ -86,13 +97,11 @@ import {
   toSafeFilename,
   KEYBOARD_SHORTCUTS,
 } from './logic'
-import { useVmeStore, type VmeDoc, type VmeModel } from './store'
+import { useVmeStore, type VmeDoc, type VmeModel, type VmeEditorMode } from './store'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const INACTIVITY_MS = 5 * 60 * 1000
-
-type EditorMode = 'wysiwyg' | 'markdown' | 'preview'
 
 const MODEL_LABELS: Record<VmeModel, string> = {
   gpt4o:  'GPT-4o',
@@ -447,6 +456,39 @@ function StatusBar({ text, model, onModelChange }: StatusBarProps) {
   )
 }
 
+// ── EmptyHint ─────────────────────────────────────────────────────────────────
+
+/**
+ * One-line muted hint shown only when the document is empty (and not dismissed).
+ * Dismissal is stored in the VME store (hintDismissed: boolean).
+ */
+interface EmptyHintProps {
+  content: string
+  dismissed: boolean
+  onDismiss: () => void
+}
+
+function EmptyHint({ content, dismissed, onDismiss }: EmptyHintProps) {
+  if (dismissed || content.trim()) return null
+  return (
+    <div className="flex items-center justify-between gap-2 px-4 py-1.5 border-b border-border bg-muted/30 text-xs text-muted-foreground">
+      <span>
+        Tip: select text for formatting, type{' '}
+        <kbd className="font-mono bg-muted border border-border rounded px-0.5">/</kbd>
+        {' '}for blocks, hover a table for row/column handles.
+      </span>
+      <button
+        onClick={onDismiss}
+        className="shrink-0 rounded p-0.5 hover:bg-muted hover:text-foreground transition-colors"
+        title="Dismiss tip"
+        aria-label="Dismiss tip"
+      >
+        <X className="h-3 w-3" />
+      </button>
+    </div>
+  )
+}
+
 // ── VisualMarkdownEditorPage ──────────────────────────────────────────────────
 
 export default function VisualMarkdownEditorPage() {
@@ -454,22 +496,33 @@ export default function VisualMarkdownEditorPage() {
     docs,
     activeDocId,
     selectedModel,
+    editorMode,
+    hintDismissed,
     createDoc,
     deleteDoc,
     updateDoc,
     setActiveDoc,
     setModel,
     saveVersion,
+    setEditorMode,
+    dismissHint,
   } = useVmeStore()
 
   const activeDoc = docs.find((d) => d.id === activeDocId) ?? docs[0]
 
-  const [mode, setMode] = useState<EditorMode>('wysiwyg')
+  // mode is driven by store; keep a local alias for convenience
+  const mode = editorMode
   const [docsOpen, setDocsOpen] = useState(true)
   const [mobileDocsOpen, setMobileDocsOpen] = useState(false)
 
   // Ref to WysiwygEditor's imperative handle for flushing before mode switch
   const wysiwygRef = useRef<WysiwygEditorHandle>(null)
+
+  // Track previous non-preview mode for Ctrl+Shift+P toggle
+  const prevNonPreviewMode = useRef<VmeEditorMode>(mode !== 'preview' ? mode : 'wysiwyg')
+
+  // Media query for split mode direction (vertical on mobile, horizontal on desktop)
+  const isDesktop = useMediaQuery('(min-width: 768px)')
 
   // Inactivity auto-version timer
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -493,14 +546,30 @@ export default function VisualMarkdownEditorPage() {
 
   // ── Mode switch ────────────────────────────────────────────────────────────
 
-  function handleModeChange(newMode: EditorMode) {
+  function handleModeChange(newMode: VmeEditorMode) {
     if (newMode === mode) return
     // Before leaving wysiwyg mode, flush any pending debounced onChange so
     // the store has the latest markdown before the editor unmounts.
     if (mode === 'wysiwyg') {
       wysiwygRef.current?.flush()
     }
-    setMode(newMode)
+    // Track last non-preview mode for Ctrl+Shift+P toggle
+    if (mode !== 'preview') {
+      prevNonPreviewMode.current = mode
+    }
+    setEditorMode(newMode)
+  }
+
+  // ── Error boundary handler ─────────────────────────────────────────────────
+
+  function handleWysiwygError() {
+    // Boundary already flushed; just switch to markdown mode so content is visible
+    setEditorMode('markdown')
+  }
+
+  function handleWysiwygReset() {
+    // User clicked "Try visual mode again" — re-enter wysiwyg mode
+    setEditorMode('wysiwyg')
   }
 
   // ── Doc switch ─────────────────────────────────────────────────────────────
@@ -535,13 +604,51 @@ export default function VisualMarkdownEditorPage() {
     URL.revokeObjectURL(url)
   }
 
-  // ── Top toolbar (mode switcher + doc actions) ──────────────────────────────
+  // ── Ctrl+Shift+P / Cmd+Shift+P — toggle preview ────────────────────────────
 
-  const modeIcons: Record<EditorMode, React.ReactNode> = {
-    wysiwyg:  <Layers  className="h-3.5 w-3.5" />,
-    markdown: <Code2   className="h-3.5 w-3.5" />,
-    preview:  <Eye     className="h-3.5 w-3.5" />,
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      const modKey = e.ctrlKey || e.metaKey
+      if (modKey && e.shiftKey && e.key === 'P') {
+        e.preventDefault()
+        if (mode === 'preview') {
+          // Return to previous editing mode
+          handleModeChange(prevNonPreviewMode.current)
+        } else {
+          prevNonPreviewMode.current = mode
+          handleModeChange('preview')
+        }
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode])
+
+  // ── Mode icons ─────────────────────────────────────────────────────────────
+
+  const modeIcons: Record<VmeEditorMode, React.ReactNode> = {
+    wysiwyg:  <Layers   className="h-3.5 w-3.5" />,
+    markdown: <Code2    className="h-3.5 w-3.5" />,
+    preview:  <Eye      className="h-3.5 w-3.5" />,
+    split:    <Columns2 className="h-3.5 w-3.5" />,
   }
+
+  const modeLabels: Record<VmeEditorMode, string> = {
+    wysiwyg:  'Visual',
+    markdown: 'Markdown',
+    preview:  'Preview',
+    split:    'Split',
+  }
+
+  const modeTitles: Record<VmeEditorMode, string> = {
+    wysiwyg:  'Visual editor',
+    markdown: 'Markdown source',
+    preview:  'Preview',
+    split:    'Split view (markdown | preview)',
+  }
+
+  // ── Top toolbar (mode switcher + doc actions) ──────────────────────────────
 
   const topToolbar = (
     <div className="flex items-center gap-1 px-2 py-1.5 border-b border-border bg-card shrink-0 min-w-0">
@@ -582,18 +689,18 @@ export default function VisualMarkdownEditorPage() {
       <ToggleGroup
         type="single"
         value={mode}
-        onValueChange={(v) => { if (v) handleModeChange(v as EditorMode) }}
+        onValueChange={(v) => { if (v) handleModeChange(v as VmeEditorMode) }}
         className="gap-0 shrink-0"
       >
-        {(['wysiwyg', 'markdown', 'preview'] as EditorMode[]).map((m) => (
+        {(['wysiwyg', 'markdown', 'preview', 'split'] as VmeEditorMode[]).map((m) => (
           <ToggleGroupItem
             key={m}
             value={m}
             className="h-7 px-2 text-[11px] font-medium gap-1"
-            title={m === 'wysiwyg' ? 'Visual editor' : m === 'markdown' ? 'Markdown source' : 'Preview'}
+            title={modeTitles[m]}
           >
             {modeIcons[m]}
-            <span className="hidden sm:inline capitalize">{m === 'wysiwyg' ? 'Visual' : m === 'markdown' ? 'Markdown' : 'Preview'}</span>
+            <span className="hidden sm:inline">{modeLabels[m]}</span>
           </ToggleGroupItem>
         ))}
       </ToggleGroup>
@@ -619,42 +726,88 @@ export default function VisualMarkdownEditorPage() {
 
   // ── Editor area (conditional rendering — only active mode is mounted) ───────
 
-  const editorArea = (
-    <div className="flex-1 min-h-0 overflow-hidden">
-      {mode === 'wysiwyg' && (
-        <div className="h-full overflow-y-auto">
-          <WysiwygEditor
-            ref={wysiwygRef}
-            value={activeDoc.content}
-            onChange={handleContentChange}
-            placeholder="Start writing… (type / for commands)"
-            className="h-full"
-            onChangeDebounceMs={150}
-            toolbar={true}
-          />
-        </div>
-      )}
-
-      {mode === 'markdown' && (
-        <div className="h-full overflow-hidden">
-          <CodeEditor
-            value={activeDoc.content}
-            onChange={handleContentChange}
-            language="markdown"
-            height="100%"
-            className="h-full"
-            placeholder="Write markdown here…"
-            basicSetup={{ lineNumbers: false, foldGutter: false, highlightActiveLine: true, history: true }}
-          />
-        </div>
-      )}
-
-      {mode === 'preview' && (
-        <div className="h-full overflow-y-auto px-5 py-4">
-          <MarkdownRenderer content={activeDoc.content} />
-        </div>
-      )}
+  const wysiwygPanel = (
+    <div className="h-full overflow-y-auto">
+      <WysiwygEditor
+        ref={wysiwygRef}
+        value={activeDoc.content}
+        onChange={handleContentChange}
+        placeholder="Start writing… (type / for commands)"
+        className="h-full"
+        onChangeDebounceMs={150}
+        toolbar={true}
+      />
     </div>
+  )
+
+  const editorArea = (
+    <WysiwygErrorBoundary
+      flushRef={wysiwygRef as RefObject<WysiwygEditorHandle | null>}
+      onError={handleWysiwygError}
+      onReset={handleWysiwygReset}
+    >
+      <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+        {/* Empty-doc first-run hint — only shown in wysiwyg mode */}
+        {mode === 'wysiwyg' && (
+          <EmptyHint
+            content={activeDoc.content}
+            dismissed={hintDismissed}
+            onDismiss={dismissHint}
+          />
+        )}
+
+        <div className="flex-1 min-h-0 overflow-hidden">
+          {mode === 'wysiwyg' && wysiwygPanel}
+
+          {mode === 'markdown' && (
+            <div className="h-full overflow-hidden">
+              <CodeEditor
+                value={activeDoc.content}
+                onChange={handleContentChange}
+                language="markdown"
+                height="100%"
+                className="h-full"
+                placeholder="Write markdown here…"
+                basicSetup={{ lineNumbers: false, foldGutter: false, highlightActiveLine: true, history: true }}
+              />
+            </div>
+          )}
+
+          {mode === 'preview' && (
+            <div className="h-full overflow-y-auto px-5 py-4">
+              <MarkdownRenderer content={activeDoc.content} />
+            </div>
+          )}
+
+          {mode === 'split' && (
+            <ResizablePanelGroup
+              orientation={isDesktop ? 'horizontal' : 'vertical'}
+              className="h-full"
+            >
+              <ResizablePanel defaultSize={50} minSize={25}>
+                <div className="h-full overflow-hidden">
+                  <CodeEditor
+                    value={activeDoc.content}
+                    onChange={handleContentChange}
+                    language="markdown"
+                    height="100%"
+                    className="h-full"
+                    placeholder="Write markdown here…"
+                    basicSetup={{ lineNumbers: false, foldGutter: false, highlightActiveLine: true, history: true }}
+                  />
+                </div>
+              </ResizablePanel>
+              <ResizableHandle withHandle />
+              <ResizablePanel defaultSize={50} minSize={25}>
+                <div className="h-full overflow-y-auto px-5 py-4">
+                  <MarkdownRenderer content={activeDoc.content} />
+                </div>
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          )}
+        </div>
+      </div>
+    </WysiwygErrorBoundary>
   )
 
   // ── Full layout ────────────────────────────────────────────────────────────

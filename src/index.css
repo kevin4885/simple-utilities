@@ -299,7 +299,7 @@
 
   /* ── Bubble toolbars (link / image / table) ─────────────────── */
   /* Rendered via TipTap BubbleMenu + @floating-ui/dom; hosted inside
-     the BubbleMenu's portal element (appended to body by tippyjs). */
+     the BubbleMenu's portal element (appended to document.body). */
   .wysiwyg-bubble-toolbar {
     display: flex;
     align-items: center;

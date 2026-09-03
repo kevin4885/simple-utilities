@@ -297,7 +297,11 @@ function HeadingDropdown({ editor, activeId }: HeadingDropdownProps) {
         <TooltipContent side="top" sideOffset={4}>
           Paragraph / Heading
         </TooltipContent>
-        <DropdownMenuContent align="start" className="min-w-[170px]">
+        <DropdownMenuContent
+            align="start"
+            className="min-w-[170px]"
+            onCloseAutoFocus={(e) => { e.preventDefault(); editor.commands.focus() }}
+          >
           {HEADING_ITEMS.map((item) => {
             const ItemIcon = item.icon
             const hotkeyLabel = item.hotkey ? formatHotkey(item.hotkey) : undefined
@@ -305,7 +309,7 @@ function HeadingDropdown({ editor, activeId }: HeadingDropdownProps) {
             return (
               <DropdownMenuItem
                 key={item.id}
-                onSelect={() => item.exec(editor)}
+                onSelect={() => { item.exec(editor); editor.commands.focus() }}
                 className={isActive ? 'bg-accent/50' : ''}
               >
                 <ItemIcon className="h-4 w-4 shrink-0" />

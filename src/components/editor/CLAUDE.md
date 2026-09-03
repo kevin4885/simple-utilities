@@ -1,4 +1,4 @@
-﻿# src/components/editor — CLAUDE.md
+# src/components/editor — CLAUDE.md
 
 Shared, reusable editor components for tools that need code editing, markdown
 rendering, or WYSIWYG editing.
@@ -11,8 +11,6 @@ These are hand-rolled app components — **not** shadcn/ui (which lives in `src/
 | `CodeEditor.tsx` | `<CodeEditor>` — CodeMirror 6 editor, multi-language, themed, dark-aware |
 | `MarkdownRenderer.tsx` | `<MarkdownRenderer>` — react-markdown with GFM + syntax-highlighted code blocks |
 | `WysiwygEditor.tsx` | Re-export shim → `./wysiwyg/WysiwygEditor` (backward compat; all imports work unchanged) |
-| `wysiwyg-utils.ts` | Pure URL normaliser — `normalizeUrl()`; also re-exported from `wysiwyg/utils.ts` |
-| `wysiwyg-utils.test.ts` | Vitest tests for `wysiwyg-utils.ts` |
 | `wysiwyg/` | **All WYSIWYG implementation** — see layout table below |
 
 ### `wysiwyg/` folder layout
@@ -20,8 +18,9 @@ These are hand-rolled app components — **not** shadcn/ui (which lives in `src/
 | Path | Purpose |
 |---|---|
 | `WysiwygEditor.tsx` | **Main component** — assembles all submodules; exports `WysiwygEditorHandle` / `WysiwygEditorProps` |
-| `utils.ts` | `getLinkRange(state)` — returns `{from,to}` of the link mark under cursor, or null. Re-exports `normalizeUrl`. |
-| `utils.test.ts` | Tests for `wysiwyg/utils.ts` |
+| `WysiwygErrorBoundary.tsx` | **Error boundary** — class component wrapping `<WysiwygEditor>` usage; on crash flushes pending edits, calls `onError` prop, renders inline fallback; see Phase 4 section below |
+| `utils.ts` | `normalizeUrl()` (canonical implementation) + `getLinkRange(state)` — returns `{from,to}` of the link mark under cursor, or null. |
+| `utils.test.ts` | Tests for `wysiwyg/utils.ts` (full normalizeUrl suite + getLinkRange + autolink round-trip) |
 | `extensions/linkKeyboard.ts` | `MARKDOWN_LINK_REGEX` + `buildLinkKeyboardExtension` (Mod-k, Mod-Shift-k, table shortcuts, input rule) |
 | `extensions/slashCommand.tsx` | `buildSlashExtension` + `SlashMenuPortal` / `SlashMenuInner` (derives items from `SLASH_ITEMS`) |
 | `extensions/widgetForm.ts` | `widgetFormExtension` — ProseMirror plugin; in-document widget chip decorations; see below |
@@ -426,7 +425,7 @@ Tab / Shift-Tab move between cells; Tab on last cell of last row adds a row.
 
 ## URL normalisation
 
-`normalizeUrl()` in `wysiwyg-utils.ts` (also re-exported from `wysiwyg/utils.ts`):
+`normalizeUrl()` in `wysiwyg/utils.ts` (also re-exported from `WysiwygEditor.tsx`):
 - Trims whitespace. Empty → `''`.
 - Leaves `#anchor`, `/path`, `./rel`, `../up` unchanged.
 - Leaves `https://`, `mailto:`, `tel:`, `data:`, `ftp://` etc. unchanged.
@@ -542,3 +541,59 @@ All table keyboard shortcuts defined in extensions/linkKeyboard.ts remain:
 Ctrl+Enter (add row after), Ctrl+Shift+Enter (add row before),
 Ctrl+Alt+→/← (add col after/before), Ctrl+Alt+Backspace (delete row).
 Tab / Shift-Tab cell navigation is handled by prosemirror-tables.
+
+---
+
+## Phase 4 additions
+
+### Autolink / linkOnPaste
+
+`Link.configure({ autolink: true, linkOnPaste: true })` in `WysiwygEditor.tsx`:
+- **autolink**: typing `https://example.com ` (URL followed by space/newline) auto-converts it to a link mark. tiptap-markdown serialises it back as `[url](url)`.
+- **linkOnPaste**: pasting a URL over a selection links the selected text.
+- **linkify: false** is kept in `Markdown.configure` intentionally — we do NOT want the markdown parser to re-linkify plain-text URLs on every parse pass (that would silently mutate the user's source on each load).
+
+### Error boundary (`wysiwyg/WysiwygErrorBoundary.tsx`)
+
+A class-component error boundary wrapping `<WysiwygEditor>` in the VME page.
+
+**Usage:**
+```tsx
+import { WysiwygErrorBoundary } from '@/components/editor/wysiwyg/WysiwygErrorBoundary'
+
+<WysiwygErrorBoundary
+  flushRef={wysiwygRef}   // RefObject<WysiwygEditorHandle | null>
+  onError={() => { setMode('markdown') }}   // switch mode on crash
+  onReset={() => { setMode('wysiwyg') }}    // switch back when user retries
+>
+  {/* Wrap the ENTIRE editor area — not just the wysiwyg panel — so the
+      boundary stays mounted when onError switches mode. The fallback notice
+      remains visible until the user clicks "Try visual mode again". */}
+  {mode === 'wysiwyg' && <WysiwygEditor ref={wysiwygRef} … />}
+  {mode === 'markdown' && <CodeEditor … />}
+  {/* … other modes … */}
+</WysiwygErrorBoundary>
+```
+
+**Note**: this boundary lives at the **page level** (VME tool), not inside WysiwygEditor itself — the editor component remains a pure WYSIWYG surface.
+
+### Split mode
+
+Split mode is implemented entirely in the VME page (`tools/writing/visual-markdown-editor/index.tsx`) — it is NOT a WysiwygEditor feature. Split renders a `ResizablePanelGroup` with `CodeEditor` (left) and `MarkdownRenderer` (right). Below `md` breakpoint the direction switches to `vertical` via the `useMediaQuery('(min-width: 768px)')` hook in `src/lib/useMediaQuery.ts`.
+
+### Focus discipline rule
+
+**Every closing path must refocus the editor.** When any popup, dropdown, or menu closes, focus must return to the TipTap editor so the user can continue typing without clicking.
+
+Implementation pattern (Radix DropdownMenuContent):
+```tsx
+<DropdownMenuContent
+  onCloseAutoFocus={(e) => { e.preventDefault(); editor.commands.focus() }}
+>
+```
+
+Implemented on:
+- `TableControls.tsx` row and column DropdownMenuContent (Phase 3)
+- `Toolbar.tsx` ListButtonEntry DropdownMenuContent (Phase 4)
+- `SelectionBubble.tsx` HeadingDropdown DropdownMenuContent (Phase 4)
+- `WidgetPopover.tsx` close/save/cancel all call `editor.commands.closeWidgetForm()` which internally calls `editor.commands.focus()` (Phase 2)

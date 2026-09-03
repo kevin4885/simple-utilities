@@ -38,6 +38,11 @@
  *   • Paste/drop image files → data URI nodes inserted into the editor.
  *   • openTableRef — table toolbar item and slash menu call openTableWidget.
  *   • ImageBubble "Edit" routes through widgetForm edit mode.
+ * Phase 3 changes:
+ *   • tableControlsExtension — replaces TableBubble with hover row/column
+ *     handles + edge "+" buttons (gravity-ui/Notion style).
+ *   • TableControls overlay — absolutely positioned inside wysiwyg-root.
+ *   • TableBubble removed.
  */
 
 import {
@@ -72,10 +77,11 @@ import { buildSlashExtension, SlashMenuPortal } from './extensions/slashCommand'
 import type { SlashMenuState, SlashMenuHandle } from './extensions/slashCommand'
 import { buildLinkKeyboardExtension } from './extensions/linkKeyboard'
 import { widgetFormExtension } from './extensions/widgetForm'
+import { tableControlsExtension } from './extensions/tableControls'
+import { TableControls } from './extensions/tableControls/TableControls'
 import { WidgetPopover } from './forms/WidgetPopover'
 import { openLinkWidget, openImageWidget, openTableWidget } from './forms/WidgetPopover'
 import { ImageBubble } from './menus/ImageBubble'
-import { TableBubble } from './menus/TableBubble'
 import { SelectionBubble } from './menus/SelectionBubble'
 import { Toolbar } from './toolbar/Toolbar'
 import { TOOLBAR_CONFIG } from './toolbar/config'
@@ -210,6 +216,7 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
         }),
         linkKeyboardExtension,
         widgetFormExtension,
+        tableControlsExtension,
         ...(minimal ? [] : [slashExtension]),
       ],
       // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -420,9 +427,9 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
             />
           )}
 
-          {/* ── Table bubble toolbar ─────────────────────────────────────── */}
+          {/* ── Table controls overlay (Phase 3) ─────────────────────────── */}
           {editor && !readOnly && (
-            <TableBubble editor={editor} />
+            <TableControls editor={editor} />
           )}
 
           {/* ── Selection bubble toolbar ─────────────────────────────────── */}

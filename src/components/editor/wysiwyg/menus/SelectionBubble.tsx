@@ -32,10 +32,11 @@
  * is inside editor.view.dom, so clicking toolbar buttons never triggers the
  * dragging state.
  *
- * Mutual exclusivity with ImageBubble and TableBubble:
+ * Mutual exclusivity with ImageBubble (TableBubble removed in Phase 3):
  *   - This bubble gates on non-empty TextSelection → never shows for image node
  *     selection (NodeSelection) or table CellSelection.
- *   - TableBubble shows only for empty selections or CellSelections → never clashes.
+ *   - TableControls overlay (Phase 3) is positioned absolutely and does not
+ *     conflict — it coexists with any selection state.
  *
  * Contents:
  *   heading/paragraph dropdown (reuses heading list from TOOLBAR_CONFIG)

@@ -1,4 +1,4 @@
-# src/components/editor — CLAUDE.md
+﻿# src/components/editor — CLAUDE.md
 
 Shared, reusable editor components for tools that need code editing, markdown
 rendering, or WYSIWYG editing.
@@ -34,8 +34,8 @@ These are hand-rolled app components — **not** shadcn/ui (which lives in `src/
 | `forms/tableGrid.ts` | Pure `nextSize(size, key)` reducer for table grid keyboard navigation |
 | `forms/tableGrid.test.ts` | Unit tests for `tableGrid.ts` |
 | `menus/ImageBubble.tsx` | `ImageBubble` — BubbleMenu shown when image node is selected |
-| `menus/TableBubble.tsx` | `TableBubble` — BubbleMenu for table operations (shows only on empty/CellSelection) |
-| `menus/SelectionBubble.tsx` | `SelectionBubble` — floating toolbar for non-empty text selections (Phase 1 new) |
+| `menus/SelectionBubble.tsx` | `SelectionBubble` — floating toolbar for non-empty text selections (Phase 1) |
+| `extensions/tableControls/` | **Phase 3** — gravity-ui-style table controls; see table-controls section below |
 | `toolbar/config.ts` | `TOOLBAR_CONFIG`, `SLASH_ITEMS`, `HEADING_ITEMS`, `formatHotkey`, all toolbar types |
 | `toolbar/config.test.ts` | Vitest tests for toolbar config invariants |
 | `toolbar/Toolbar.tsx` | `Toolbar` component — renders `TOOLBAR_CONFIG` using `useEditorState` |
@@ -116,7 +116,7 @@ full VME tool page. Includes `TooltipProvider` internally for toolbar tooltips.
 - **shadcn/ui**: `popover`, `input`, `button`, `label`, `toggle`, `separator`,
   `dropdown-menu`, `tooltip`, `checkbox` — all must be present in `src/components/ui/`.
 - **@tiptap/react/menus**: `BubbleMenu` component (ships with @tiptap/react v3).
-- **@tiptap/pm/state**: `TextSelection` — used by SelectionBubble/TableBubble.
+- **@tiptap/pm/state**: `TextSelection` — used by SelectionBubble.
 
 ```tsx
 import WysiwygEditor, { type WysiwygEditorHandle } from '@/components/editor/WysiwygEditor'
@@ -242,8 +242,8 @@ The toolbar is `sticky top-0 z-10` inside `wysiwyg-root` — stays visible as th
 
 ### Mutual exclusivity:
 - **ImageBubble** — shows only for image `NodeSelection` (never a `TextSelection`)
-- **TableBubble** — shows only for empty cursor or `CellSelection` inside a table
 - **SelectionBubble** — shows for non-empty `TextSelection` anywhere else
+- **TableControls overlay** (Phase 3) — absolute-positioned, coexists with any selection state
 
 ### Contents:
 Heading/paragraph dropdown, bold/italic/strike/inline-code toggles, link button.
@@ -412,8 +412,11 @@ round-trip. Use a raw HTML `<img>` embed if you need sized images.
 
 Tab / Shift-Tab move between cells; Tab on last cell of last row adds a row.
 
-**Bubble toolbar** (cursor inside table, empty selection only):
-add row above/below, delete row, add column before/after, delete column, delete table.
+**Hover controls (Phase 3 — see tableControls section below):**
+- Row handle pill (left edge of hovered row): insert above/below, move up/down, toggle header, delete row, delete table.
+- Column handle pill (top edge of hovered column): insert left/right, move left/right, delete column, delete table.
+- Edge "+" buttons: append column (right edge), append row (bottom edge).
+- Focused table gets a subtle ring outline (`wysiwyg-table-focused` decoration class).
 
 **Keyboard shortcuts** (via `linkKeyboard` extension):
 `Ctrl+Enter` (add row after), `Ctrl+Shift+Enter` (add row before),
@@ -445,12 +448,11 @@ Negative cases NOT converted: `[ ]`, `[x]`, `[foo]` (no URL), `[text]()` (empty 
 
 TipTap v3's `BubbleMenu` uses **@floating-ui/dom** for positioning. Prop: `options={{ placement: '...' }}`.
 
-**Three** BubbleMenu instances (only one ever visible at a time):
+**Two** BubbleMenu instances (Phase 3 removed `tableBubble`):
 
 | Bubble | `pluginKey` | `shouldShow` condition |
 |---|---|---|
 | `imageBubble` | `'imageBubble'` | `e.isActive('image')` |
-| `tableBubble` | `'tableBubble'` | inside table AND (empty selection OR CellSelection) AND not image |
 | `selectionBubble` | `'selectionBubble'` | non-empty TextSelection AND focused AND not codeBlock AND not image AND not mouseDown |
 
 ---
@@ -463,3 +465,80 @@ TipTap v3's `BubbleMenu` uses **@floating-ui/dom** for positioning. Prop: `optio
 `SyntaxHighlighter.registerLanguage(...)` at the top of `MarkdownRenderer.tsx`.
 
 **WysiwygEditor:** no config needed — code blocks render as `<pre class="wysiwyg-code-block">`.
+
+
+---
+
+## Table controls (Phase 3)
+
+TableBubble (7-button BubbleMenu) has been removed and replaced with
+gravity-ui/Notion-style in-place controls.
+
+### wysiwyg/extensions/tableControls/ layout
+
+| File | Purpose |
+|---|---|
+| plugin.ts | ProseMirror plugin — focused-table decoration, throttled hover tracking, 	ableControlsKey |
+| commands.ts | Pure helpers: selectRow, selectColumn, moveRow, moveColumn, isRectangularTable, unToggleHeaderRow |
+| TableControls.tsx | React overlay — row/column handle pills + edge "+" buttons |
+| index.ts | 	ableControlsExtension TipTap Extension; re-exports 	ableControlsKey, setDropdownOpen, commands |
+| commands.test.ts | Vitest tests for commands + throttle utility |
+
+### Plugin state (	ableControlsKey.getState(state))
+
+`	s
+interface TableControlsState {
+  tablePos: number | null    // pos of table node containing selection, or null
+  hover: { rowIdx: number; colIdx: number } | null  // hovered cell
+  decorations: DecorationSet  // focused outline + data-row-handle / data-col-handle attrs
+}
+`
+
+### How it works
+
+1. **Focus decoration**: when selection is inside a table, Decoration.node adds wysiwyg-table-focused class (subtle ring outline).
+2. **Hover tracking**: throttled (100 ms) mousemove resolves the cell under the pointer via posAtCoords + walking up to 	ableCell/	ableHeader + TableMap.findCell. Dispatches 	r.setMeta(tableControlsKey, { type: 'hover', rowIdx, colIdx }). mouseleave clears after 150 ms grace.
+3. **Handle decorations**: when hover is set, Decoration.node adds data-row-handle attr to the first cell of the hovered row, and data-col-handle attr to the first-row cell in the hovered column. These are queried by TableControls.tsx to measure handle positions.
+4. **React overlay** (TableControls.tsx): subscribed to editor 	ransaction events; re-measures rects on scroll/resize. Renders handle pills and edge "+" buttons using absolute positioning inside wysiwyg-root.
+5. **Dropdown blur guard**: all handle buttons use onMouseDown={e=>e.preventDefault()} to prevent editor blur. Menus use onCloseAutoFocus to refocus the editor.
+6. **Dropdown-open freeze**: setDropdownOpen(true) is called when a row/col menu opens, so the mousemove handler ignores events while a menu is displayed.
+
+### Handles
+
+**Row handle** (6×22px pill at 	ableRect.left - 14px, vertically centered on [data-row-handle] cell):
+- Click opens DropdownMenu: Insert row above, Insert row below, Move row up *(disabled if first row or non-rectangular)*, Move row down *(disabled if last row or non-rectangular)*, Toggle header row *(only for row 0)*, Delete row, Delete table.
+
+**Column handle** (22×6px pill at 	ableRect.top - 14px, horizontally centered on [data-col-handle] cell):
+- Click opens DropdownMenu: Insert column left, Insert column right, Move column left *(disabled if first col or non-rectangular)*, Move column right *(disabled if last col or non-rectangular)*, Delete column, Delete table.
+
+**Edge "+" buttons** (20×20px round):
+- Right edge: Append column (ddColumnAfter)
+- Bottom edge: Append row (ddRowAfter)
+
+### Move operations
+
+moveRow / moveColumn delegate to prosemirror-tables' moveTableRow / moveTableColumn commands.
+GFM tables are always rectangular (no colspan/rowspan), but both commands guard via isRectangularTable
+(checks TableMap.problems). Move items are disabled when the table is non-rectangular.
+
+### Spans limitation
+
+Colspan/rowspan > 1 tables (not producible by GFM markdown) disable Move row/column items.
+Insert/delete/toggle-header still work regardless.
+
+### CSS classes
+
+| Class | Applied to | Purpose |
+|---|---|---|
+| wysiwyg-table-focused | table node | 1px ring outline via outline |
+| wysiwyg-table-handle | handle pill buttons | Pill base style (bg-border, rounded-full) |
+| wysiwyg-table-row-handle | row pill | Additional targeting |
+| wysiwyg-table-col-handle | col pill | Additional targeting |
+| wysiwyg-table-plus-btn | edge "+" buttons | bg-background border shadow |
+
+### Keyboard shortcuts (unchanged from Phase 2)
+
+All table keyboard shortcuts defined in extensions/linkKeyboard.ts remain:
+Ctrl+Enter (add row after), Ctrl+Shift+Enter (add row before),
+Ctrl+Alt+→/← (add col after/before), Ctrl+Alt+Backspace (delete row).
+Tab / Shift-Tab cell navigation is handled by prosemirror-tables.

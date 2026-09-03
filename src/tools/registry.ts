@@ -669,7 +669,7 @@ export const tools: ToolDef[] = [
     title: 'Visual Markdown Editor',
     description:
       'WYSIWYG markdown editor for non-technical users. Three modes: Visual (rich-text), Markdown (source), and Preview. ' +
-      'Auto-converting markdown input rules, a / slash command palette, tables, task lists, and multi-document support. ' +
+      'Gravity-UI-style formatting toolbar, floating selection toolbar, / slash command menu, tables, task lists, and multi-document support. ' +
       'All editing stays in-browser — no uploads, no server.',
     keywords: [
       'wysiwyg',

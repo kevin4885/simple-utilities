@@ -50,90 +50,6 @@ export function toSafeFilename(title: string): string {
     .toLowerCase()
 }
 
-/**
- * Build palette item groups for the component palette panel.
- * Returns a stable array — safe to use as default for useMemo deps.
- */
-export interface PaletteItem {
-  label: string
-  description: string
-  icon: string
-  /** Markdown snippet to insert at cursor */
-  snippet: string
-}
-
-export interface PaletteGroup {
-  group: string
-  items: PaletteItem[]
-}
-
-export const PALETTE_GROUPS: PaletteGroup[] = [
-  {
-    group: 'Headings',
-    items: [
-      { label: 'Heading 1', description: 'H1 — main title', icon: 'H1', snippet: '# Heading 1\n' },
-      { label: 'Heading 2', description: 'H2 — section', icon: 'H2', snippet: '## Heading 2\n' },
-      { label: 'Heading 3', description: 'H3 — sub-section', icon: 'H3', snippet: '### Heading 3\n' },
-      { label: 'Heading 4', description: 'H4', icon: 'H4', snippet: '#### Heading 4\n' },
-      { label: 'Heading 5', description: 'H5', icon: 'H5', snippet: '##### Heading 5\n' },
-      { label: 'Heading 6', description: 'H6', icon: 'H6', snippet: '###### Heading 6\n' },
-    ],
-  },
-  {
-    group: 'Text',
-    items: [
-      { label: 'Bold',          description: '**bold**',           icon: 'B',  snippet: '**bold text**' },
-      { label: 'Italic',        description: '*italic*',           icon: 'I',  snippet: '*italic text*' },
-      { label: 'Strikethrough', description: '~~strike~~',         icon: 'S̶', snippet: '~~strikethrough~~' },
-      { label: 'Inline Code',   description: '`code`',            icon: '`',  snippet: '`inline code`' },
-      { label: 'Link',          description: '[text](url)',        icon: '🔗', snippet: '[link text](https://example.com)' },
-    ],
-  },
-  {
-    group: 'Blocks',
-    items: [
-      { label: 'Paragraph',      description: 'Plain paragraph',   icon: '¶',   snippet: 'Paragraph text.\n' },
-      { label: 'Blockquote',     description: '> quote',           icon: '❝',   snippet: '> Blockquote text\n' },
-      { label: 'Code Block',     description: 'Fenced code block', icon: '</>', snippet: '```\ncode here\n```\n' },
-      { label: 'Horizontal Rule',description: '---',               icon: '—',   snippet: '\n---\n' },
-    ],
-  },
-  {
-    group: 'Lists',
-    items: [
-      { label: 'Bullet List',  description: 'Unordered list',  icon: '•',  snippet: '- Item 1\n- Item 2\n- Item 3\n' },
-      { label: 'Ordered List', description: 'Numbered list',   icon: '1.', snippet: '1. Item 1\n2. Item 2\n3. Item 3\n' },
-      { label: 'Task List',    description: 'Checkbox list',   icon: '☑',  snippet: '- [ ] Task 1\n- [x] Done task\n- [ ] Task 3\n' },
-    ],
-  },
-  {
-    group: 'Table',
-    items: [
-      {
-        label: '3×3 Table',
-        description: 'Table with header',
-        icon: '⊞',
-        snippet:
-          '| Header 1 | Header 2 | Header 3 |\n' +
-          '| --- | --- | --- |\n' +
-          '| Cell 1 | Cell 2 | Cell 3 |\n' +
-          '| Cell 4 | Cell 5 | Cell 6 |\n',
-      },
-    ],
-  },
-  {
-    group: 'Media',
-    items: [
-      {
-        label: 'Image',
-        description: '![alt](url)',
-        icon: '🖼',
-        snippet: '![Image description](https://example.com/image.png)\n',
-      },
-    ],
-  },
-]
-
 // ---------------------------------------------------------------------------
 // Keyboard shortcuts list (used by ShortcutsDialog for discoverability)
 // ---------------------------------------------------------------------------
@@ -163,6 +79,7 @@ export interface ShortcutEntry {
  *   linkKeyboard extension          — Mod-k, Mod-Shift-k
  *   linkKeyboard extension (table)  — Mod-Enter, Mod-Shift-Enter,
  *                                     Mod-Alt-←/→/Backspace
+ *   undo/redo                       — Ctrl+Z / Ctrl+Shift+Z (StarterKit UndoRedo)
  */
 export const KEYBOARD_SHORTCUTS: ShortcutEntry[] = [
   // ── Text formatting ─────────────────────────────────────────────────────
@@ -172,6 +89,9 @@ export const KEYBOARD_SHORTCUTS: ShortcutEntry[] = [
   { category: 'Formatting', keys: 'Ctrl+E / Cmd+E',           description: 'Inline code' },
   { category: 'Formatting', keys: 'Ctrl+Shift+B',             description: 'Blockquote' },
   { category: 'Formatting', keys: 'Ctrl+Alt+C',               description: 'Code block' },
+  // ── History ─────────────────────────────────────────────────────────────
+  { category: 'History',    keys: 'Ctrl+Z / Cmd+Z',           description: 'Undo' },
+  { category: 'History',    keys: 'Ctrl+Shift+Z / Cmd+Shift+Z', description: 'Redo' },
   // ── Headings ────────────────────────────────────────────────────────────
   { category: 'Headings',   keys: 'Ctrl+Alt+1',               description: 'Heading 1' },
   { category: 'Headings',   keys: 'Ctrl+Alt+2',               description: 'Heading 2' },

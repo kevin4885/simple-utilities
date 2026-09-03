@@ -11,9 +11,7 @@ import {
   // VME-specific
   getModeLabel,
   toSafeFilename,
-  PALETTE_GROUPS,
   KEYBOARD_SHORTCUTS,
-  type PaletteGroup,
 } from './logic'
 import { MARKDOWN_LINK_REGEX } from '@/components/editor/WysiwygEditor'
 
@@ -151,38 +149,6 @@ describe('toSafeFilename', () => {
   })
 })
 
-describe('PALETTE_GROUPS', () => {
-  it('is a non-empty array', () => {
-    expect(Array.isArray(PALETTE_GROUPS)).toBe(true)
-    expect(PALETTE_GROUPS.length).toBeGreaterThan(0)
-  })
-
-  it('every group has a name and non-empty items array', () => {
-    PALETTE_GROUPS.forEach((group: PaletteGroup) => {
-      expect(typeof group.group).toBe('string')
-      expect(group.group.length).toBeGreaterThan(0)
-      expect(Array.isArray(group.items)).toBe(true)
-      expect(group.items.length).toBeGreaterThan(0)
-    })
-  })
-
-  it('every item has required fields', () => {
-    PALETTE_GROUPS.forEach((group: PaletteGroup) => {
-      group.items.forEach((item) => {
-        expect(typeof item.label).toBe('string')
-        expect(typeof item.snippet).toBe('string')
-        expect(item.snippet.length).toBeGreaterThan(0)
-      })
-    })
-  })
-
-  it('includes Headings and Lists groups', () => {
-    const groupNames = PALETTE_GROUPS.map((g) => g.group)
-    expect(groupNames).toContain('Headings')
-    expect(groupNames).toContain('Lists')
-  })
-})
-
 // ---------------------------------------------------------------------------
 // KEYBOARD_SHORTCUTS constant
 // ---------------------------------------------------------------------------
@@ -214,6 +180,12 @@ describe('KEYBOARD_SHORTCUTS', () => {
     const found = KEYBOARD_SHORTCUTS.find((s) => s.keys.includes('Ctrl+Shift+K'))
     expect(found).toBeDefined()
     expect(found?.description.toLowerCase()).toMatch(/unlink|remove/)
+  })
+
+  it('includes Ctrl+Z for undo', () => {
+    const found = KEYBOARD_SHORTCUTS.find((s) => s.keys.includes('Ctrl+Z'))
+    expect(found).toBeDefined()
+    expect(found?.description.toLowerCase()).toMatch(/undo/)
   })
 })
 
@@ -257,11 +229,6 @@ describe('MARKDOWN_LINK_REGEX', () => {
 
   // Negative cases — should NOT match
   it('does NOT match task list [ ] (empty checkbox)', () => {
-    // Single space inside brackets is only 1 char — regex requires 1+ but
-    // the handler explicitly rejects single-char whitespace text.
-    // At the regex level: [ ] has text=" " which is length 1, not matched
-    // because our regex needs at least 1 char but not empty.
-    // The main guard is in the handler; here we verify length semantics.
     const m = '- [ ] task'.match(MARKDOWN_LINK_REGEX)
     expect(m).toBeNull()
   })

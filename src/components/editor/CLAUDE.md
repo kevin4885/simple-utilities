@@ -6,13 +6,32 @@ These are hand-rolled app components — **not** shadcn/ui (which lives in `src/
 
 ## Files
 
-| File | Component | Purpose |
-|---|---|---|
-| `CodeEditor.tsx` | `<CodeEditor>` | CodeMirror 6 editor — multi-language, themed, dark-aware |
-| `MarkdownRenderer.tsx` | `<MarkdownRenderer>` | react-markdown renderer — full element coverage, syntax-highlighted code blocks |
-| `WysiwygEditor.tsx` | `<WysiwygEditor>` | TipTap WYSIWYG editor — markdown in / markdown out, slash menu, bubble menus (image + table), keyboard-first link editing |
-| `wysiwyg-utils.ts` | — | Pure helpers for WysiwygEditor — `normalizeUrl()` and future utils |
-| `wysiwyg-utils.test.ts` | — | Vitest unit tests for `wysiwyg-utils.ts` |
+| File/Folder | Component / Purpose |
+|---|---|
+| `CodeEditor.tsx` | `<CodeEditor>` — CodeMirror 6 editor, multi-language, themed, dark-aware |
+| `MarkdownRenderer.tsx` | `<MarkdownRenderer>` — react-markdown with GFM + syntax-highlighted code blocks |
+| `WysiwygEditor.tsx` | Re-export shim → `./wysiwyg/WysiwygEditor` (backward compat; all imports work unchanged) |
+| `wysiwyg-utils.ts` | Pure URL normaliser — `normalizeUrl()`; also re-exported from `wysiwyg/utils.ts` |
+| `wysiwyg-utils.test.ts` | Vitest tests for `wysiwyg-utils.ts` |
+| `wysiwyg/` | **All WYSIWYG implementation** — see layout table below |
+
+### `wysiwyg/` folder layout
+
+| Path | Purpose |
+|---|---|
+| `WysiwygEditor.tsx` | **Main component** — assembles all submodules; exports `WysiwygEditorHandle` / `WysiwygEditorProps` |
+| `utils.ts` | `getSelectionRect`, `anchorRectToStyle`, re-exports `normalizeUrl` |
+| `utils.test.ts` | Tests for `wysiwyg/utils.ts` |
+| `extensions/linkKeyboard.ts` | `MARKDOWN_LINK_REGEX` + `buildLinkKeyboardExtension` (Mod-k, Mod-Shift-k, table shortcuts, input rule) |
+| `extensions/slashCommand.tsx` | `buildSlashExtension` + `SlashMenuPortal` / `SlashMenuInner` (derives items from `SLASH_ITEMS`) |
+| `forms/LinkForm.tsx` | `LinkForm` / `LinkPopover` — modal-free inline link editor |
+| `forms/ImageForm.tsx` | `ImageForm` / `ImagePopover` — modal-free inline image editor |
+| `menus/ImageBubble.tsx` | `ImageBubble` — BubbleMenu shown when image node is selected |
+| `menus/TableBubble.tsx` | `TableBubble` — BubbleMenu for table operations (shows only on empty/CellSelection) |
+| `menus/SelectionBubble.tsx` | `SelectionBubble` — floating toolbar for non-empty text selections (Phase 1 new) |
+| `toolbar/config.ts` | `TOOLBAR_CONFIG`, `SLASH_ITEMS`, `HEADING_ITEMS`, `formatHotkey`, all toolbar types |
+| `toolbar/config.test.ts` | Vitest tests for toolbar config invariants |
+| `toolbar/Toolbar.tsx` | `Toolbar` component — renders `TOOLBAR_CONFIG` using `useEditorState` |
 
 ---
 
@@ -83,17 +102,14 @@ import MarkdownRenderer from '@/components/editor/MarkdownRenderer'
 
 A TipTap (ProseMirror) WYSIWYG editor with markdown as the single source of truth.
 Tracks dark mode internally. Can be embedded standalone — safe to use without the
-full VME tool page.
+full VME tool page. Includes `TooltipProvider` internally for toolbar tooltips.
 
 ### Dependencies
 
-- **shadcn/ui**: `popover`, `input`, `button`, `label` — required for the link/image
-  popover forms. All must be present in `src/components/ui/`.
-- **@tiptap/react/menus**: `BubbleMenu` component — for image and table context
-  toolbars. Ships with `@tiptap/react` v3 (no extra install needed).
-- **@tiptap/extension-bubble-menu**: underlying plugin (transitive dep of @tiptap/react).
-- **@floating-ui/dom**: positioning library used by BubbleMenu v3 (transitive dep of
-  @tiptap/extension-bubble-menu — no extra install needed).
+- **shadcn/ui**: `popover`, `input`, `button`, `label`, `toggle`, `separator`,
+  `dropdown-menu`, `tooltip` — all must be present in `src/components/ui/`.
+- **@tiptap/react/menus**: `BubbleMenu` component (ships with @tiptap/react v3).
+- **@tiptap/pm/state**: `TextSelection` — used by SelectionBubble/TableBubble.
 
 ```tsx
 import WysiwygEditor, { type WysiwygEditorHandle } from '@/components/editor/WysiwygEditor'
@@ -109,6 +125,7 @@ const editorRef = useRef<WysiwygEditorHandle>(null)
   readOnly={false}
   className="h-full"
   minimal={false}                     // see below
+  toolbar={true}                      // true | false | ToolbarConfig
   onChangeDebounceMs={150}            // default; 0 = synchronous
 />
 
@@ -125,7 +142,8 @@ editorRef.current?.flush()
 | `placeholder` | `string` | `'Start writing… (type / for commands)'` | Placeholder text when empty. |
 | `readOnly` | `boolean` | `false` | Disables editing. |
 | `className` | `string` | — | Extra wrapper classes. |
-| `minimal` | `boolean` | `false` | No slash menu — pure keyboard surface for inline embedding. |
+| `minimal` | `boolean` | `false` | No slash menu, no toolbar. Pure keyboard surface for inline embedding. |
+| `toolbar` | `boolean \| ToolbarConfig` | `true` | `true` = default toolbar; `false` = none; custom array = custom config. Ignored when `minimal=true`. |
 | `onChangeDebounceMs` | `number` | `150` | Debounce delay for onChange. 0 = synchronous. |
 
 ### Imperative handle (`WysiwygEditorHandle`)
@@ -139,207 +157,169 @@ editorRef.current?.flush()
 - Doc switching
 - Any action that reads `activeDoc.content` right after editor changes
 
-### Performance design
+---
 
-1. **`lastEmittedMd` ref**: The sync-effect that sets content when `value` changes now
-   does a reference-equality check against `lastEmittedMd.current`. If they match,
-   it's a round-trip from our own edit → skip `getMarkdown()` and `setContent()`.
-   Only on genuine external changes (doc switch, Markdown-mode edit) does it call
-   `setContent(value, { emitUpdate: false })`.
+## Toolbar (Phase 1)
 
-2. **Debounced emit**: `onUpdate` schedules `getMarkdown() + onChange()` after
-   `onChangeDebounceMs` (default 150ms) of idle. Rapid keystrokes only produce one
-   serialisation + one store write per pause. The timer is cancelled and rescheduled
-   on every update.
+### Data-driven config — `wysiwyg/toolbar/config.ts`
 
-3. **Flush points**: `flush()` is called synchronously on editor blur and when
-   `readOnly` flips. The unmount cleanup only cancels the pending timer — to avoid
-   losing the last ≤150ms of edits, the tool page calls `flush()` imperatively
-   before mode switches and doc switches.
+```ts
+interface ToolbarItem {
+  id: string
+  title: string
+  icon: LucideIcon
+  hotkey?: string              // display string e.g. 'Ctrl+B'
+  exec: (editor: Editor, actions?: ToolbarActions) => void
+  isActive?: (editor: Editor) => boolean
+  isEnabled?: (editor: Editor) => boolean
+  keywords?: string[]
+  description?: string
+}
+interface ToolbarListButton {
+  id: string; title: string; icon: LucideIcon; type: 'list'; items: ToolbarItem[]
+}
+type ToolbarGroup = (ToolbarItem | ToolbarListButton)[]
+type ToolbarConfig = ToolbarGroup[]
 
-4. **Cancelled on external setContent**: If a pending debounce timer exists when an
-   external value arrives, it is cancelled before `setContent()` to prevent the
-   old snapshot from overwriting the new content.
+interface ToolbarActions {
+  openLink?: () => void
+  openImage?: () => void
+}
+```
 
-### Key notes
+`exec` receives `(editor, actions?)`. Link/image items call `actions?.openLink?.()` /
+`actions?.openImage?.()` — this keeps popover openers injectable, not hardcoded. Later
+phases will swap these for widgetForm anchors without changing config items.
 
-- **Markdown round-trip**: `value` is parsed → ProseMirror doc on mount / external value
-  change; the doc is serialised → markdown on every edit via `tiptap-markdown`.
-- **GFM support**: headings H1-H6, paragraph, bold, italic, strikethrough, inline code,
-  links, blockquote, fenced code blocks with language, bullet/ordered/task lists,
-  tables, horizontal rule, images.
-- **Markdown input rules** auto-convert as you type: `# `…`###### ` headings, `- `/`* `
-  bullet list, `1. ` ordered list, `[ ] `/`[x] ` task list, `> ` blockquote,
-  ` ``` ` fenced code block, `---` horizontal rule, plus inline `**bold**`, `*italic*`,
-  `~~strike~~`, `` `code` ``, and `[text](url)` → link mark.
-- **Table keyboard UX**: Tab/Shift-Tab move between cells; Tab on last cell adds a new
-  row. Additional shortcuts via `linkKeyboard` extension (see below).
-- **Dark mode**: tracked via `MutationObserver` on `document.documentElement.classList` —
-  same pattern as `CodeEditor` and `MarkdownRenderer`.
-- **External value sync**: when the `value` prop changes (e.g. doc switch), the editor
-  calls `setContent(value, { emitUpdate: false })` without triggering `onChange`.
-  The `lastEmittedMd` ref prevents round-trip re-syncs.
-- **minimal=true use case**: inline embedding for LLM prompt inputs. No slash menu popup;
-  Ctrl+K link, image/table bubble menus, markdown input rules, and full keyboard
-  editing still work.
+`formatHotkey(pattern: string)` returns Cmd on Mac, Ctrl elsewhere.
+
+### Adding a toolbar item
+
+1. Add a new `ToolbarItem` object to the appropriate group in `TOOLBAR_CONFIG`.
+2. Set a unique `id`, `title`, `icon` (lucide-react), `exec`.
+3. If it needs link/image popovers, use `actions?.openLink?.()` in exec.
+4. The item is automatically included in `SLASH_ITEMS` (unless its `id` is `'undo'` or `'redo'`).
+5. If it's a group dropdown, add a `ToolbarListButton` with `type: 'list'`.
+
+### Default toolbar groups
+
+| Group | Items |
+|---|---|
+| History | undo, redo |
+| Inline marks | bold, italic, strikethrough, inlineCode |
+| Block structure | heading▾ (paragraph, H1–H6), list▾ (bullet, ordered, task, indent, outdent), link, blockquote, code▾ (inline, block) |
+| Insert | image, table, horizontalRule |
+
+### Toolbar rendering — `wysiwyg/toolbar/Toolbar.tsx`
+
+Uses `useEditorState({ editor, selector })` to compute active/enabled flags in ONE
+selector, so the toolbar only re-renders when flags actually change (not every keystroke).
+
+Groups separated by vertical Separators. ToolbarItem → shadcn `Toggle` (sm).
+ToolbarListButton → shadcn `DropdownMenu`. Every button wrapped in shadcn `Tooltip`.
+
+The toolbar is `sticky top-0 z-10` inside `wysiwyg-root` — stays visible as the editor scrolls.
 
 ---
 
-### Link editing (keyboard-first)
+## Selection toolbar (Phase 1)
+
+`wysiwyg/menus/SelectionBubble.tsx` — a third BubbleMenu (pluginKey `selectionBubble`).
+
+### shouldShow rules (mirrors gravity-ui SelectionContext):
+- Selection is non-empty AND is a `TextSelection` (not `NodeSelection` or `CellSelection`)
+- Editor is focused
+- Neither `$from` nor `$to` parent is a `codeBlock`
+- Not inside an image
+- Mouse button is NOT held down (suppressed on `mousedown`, re-evaluated on `mouseup`)
+
+### Mutual exclusivity:
+- **ImageBubble** — shows only for image `NodeSelection` (never a `TextSelection`)
+- **TableBubble** — shows only for empty cursor or `CellSelection` inside a table
+- **SelectionBubble** — shows for non-empty `TextSelection` anywhere else
+
+### Contents:
+Heading/paragraph dropdown, bold/italic/strike/inline-code toggles, link button.
+
+---
+
+## Link editing (keyboard-first)
 
 Links are keyboard-driven. The link bubble toolbar has been removed.
 
 | Action | How |
 |---|---|
-| Insert a new link | `Ctrl+K` / `Cmd+K` — opens LinkPopover with Text + URL fields; Tab through fields, Enter to save, Escape to cancel |
-| Edit an existing link | Place caret inside link → `Ctrl+K` — popover opens prefilled with current text + href |
-| Wrap selection in link | Select text → `Ctrl+K` — popover opens with Text prefilled from selection |
-| Remove link | `Ctrl+Shift+K` — unlinks immediately without a dialog |
-| Insert via slash menu | Type `/link` → Enter — same popover |
-| Markdown input rule | Type `[text](url)` + Space — auto-converts to a real link mark |
+| Insert a new link | `Ctrl+K` / `Cmd+K` — opens LinkPopover with Text + URL fields |
+| Edit an existing link | Place caret inside link → `Ctrl+K` |
+| Wrap selection in link | Select text → `Ctrl+K` |
+| Remove link | `Ctrl+Shift+K` — unlinks immediately |
+| Insert via slash menu | Type `/link` → Enter |
+| Via selection toolbar | Select text → click Link button |
+| Markdown input rule | Type `[text](url)` + Space |
 
-**After save/cancel/unlink**: editor focus is automatically returned so the user can keep typing.
+---
 
-**URL normalisation** (`normalizeUrl()` in `wysiwyg-utils.ts`):
-- Trims whitespace.
-- Empty → no-op (treated as "remove link").
+## Image editing
+
+1. **Inserting a new image:** type `/image` in the slash menu (or toolbar Image button)
+2. **Editing an existing image:** click to select → bubble toolbar appears:
+   - **Edit** button — reopens the popover prefilled with current src + alt
+   - **Remove** button — deletes the image node
+
+---
+
+## Table editing
+
+Tab / Shift-Tab move between cells; Tab on last cell of last row adds a row.
+
+**Bubble toolbar** (cursor inside table, empty selection only):
+add row above/below, delete row, add column before/after, delete column, delete table.
+
+**Keyboard shortcuts** (via `linkKeyboard` extension):
+`Ctrl+Enter` (add row after), `Ctrl+Shift+Enter` (add row before),
+`Ctrl+Alt+→/←` (add col after/before), `Ctrl+Alt+Backspace` (delete row).
+
+---
+
+## URL normalisation
+
+`normalizeUrl()` in `wysiwyg-utils.ts` (also re-exported from `wysiwyg/utils.ts`):
+- Trims whitespace. Empty → `''`.
 - Leaves `#anchor`, `/path`, `./rel`, `../up` unchanged.
-- Leaves `https://`, `mailto:`, `tel:`, `data:`, `ftp://`, etc. unchanged.
-- Prepends `https://` to bare domains and `host:port` URLs.
+- Leaves `https://`, `mailto:`, `tel:`, `data:`, `ftp://` etc. unchanged.
+- Prepends `https://` to bare domains and `host:port`.
 - Blocks `javascript:` and `vbscript:` (returns `''`).
 
 ---
 
-### Markdown link input rule
+## Markdown link input rule (`MARKDOWN_LINK_REGEX`)
 
-Typing `[text](url)` followed by a space (or at end of line) auto-converts the
-bracket-paren syntax into a real link mark. The regex is exported as `MARKDOWN_LINK_REGEX`
-for testing.
+Typing `[text](url)` + space auto-converts to a real link mark.
+Exported from `wysiwyg/extensions/linkKeyboard.ts` and re-exported from `WysiwygEditor.tsx`.
 
-**Negative cases handled** (these are NOT converted):
-- `[ ]` — task list unchecked (empty text)
-- `[x]` — task list checked (single letter text)
-- `[foo]` — no parenthesised URL
-- `[text]()` — empty URL
+Negative cases NOT converted: `[ ]`, `[x]`, `[foo]` (no URL), `[text]()` (empty URL).
 
 ---
 
-### Image editing
+## Bubble menu implementation notes
 
-The image interaction model is mouse-driven (popover via bubble menu):
+TipTap v3's `BubbleMenu` uses **@floating-ui/dom** for positioning. Prop: `options={{ placement: '...' }}`.
 
-1. **Inserting a new image:** type `/image` in the slash menu — a popover form appears
-   with **Image URL** and **Alt text** fields.
+**Three** BubbleMenu instances (only one ever visible at a time):
 
-2. **Editing an existing image:** click the image to select it. A **bubble toolbar**
-   appears below with:
-   - **Edit** button (reopens the popover prefilled with current src + alt)
-   - **Remove** button (deletes the image node)
-
-After save/cancel/remove, focus is returned to the editor.
-
----
-
-### Table editing
-
-Tab / Shift-Tab move between cells; Tab on last cell of last row adds a row.
-
-**Bubble toolbar** (appears above the table when cursor is inside):
-
-| Button | Action |
-|---|---|
-| Add row above | `addRowBefore()` |
-| Add row below | `addRowAfter()` |
-| Delete row | `deleteRow()` |
-| Add column before | `addColumnBefore()` |
-| Add column after | `addColumnAfter()` |
-| Delete column | `deleteColumn()` |
-| Delete table | `deleteTable()` |
-
-**Keyboard shortcuts** (via `linkKeyboard` extension):
-
-| Shortcut | Action |
-|---|---|
-| `Ctrl+Enter` | Add row after (only inside table) |
-| `Ctrl+Shift+Enter` | Add row before (only inside table) |
-| `Ctrl+Alt+→` | Add column after (only inside table) |
-| `Ctrl+Alt+←` | Add column before (only inside table) |
-| `Ctrl+Alt+Backspace` | Delete row (only inside table) |
-
-Shortcuts that don't match (not inside a table) return `false` so the keys fall through to other handlers.
-
----
-
-### `linkKeyboard` extension
-
-A single TipTap `Extension` registered for all non-minimal instances. Provides:
-- `Mod-k` → open LinkPopover (calls `openLinkRef.current()`)
-- `Mod-Shift-k` → unlink (extendMarkRange + unsetLink)
-- Table keyboard shortcuts (see above)
-- `[text](url)` InputRule → real link mark
-
----
-
-### Bubble menu implementation notes
-
-TipTap v3's `BubbleMenu` (from `@tiptap/react/menus`) uses **@floating-ui/dom** for
-positioning — not Tippy.js. The prop is `options={{ placement: 'bottom' }}` (not
-`tippyOptions`).
-
-**Two** `BubbleMenu` instances remain (link bubble removed):
-
-| Bubble | shouldShow condition |
-|---|---|
-| `imageBubble` | `e.isActive('image')` |
-| `tableBubble` | `e.isActive('table') && !e.isActive('image')` |
-
-This ensures only one bubble menu is ever visible at a time.
-
-The link/image **popover forms** (shadcn `Popover`) are rendered separately from the
-bubble toolbars — they are portalled to `<body>` by Radix UI's `PopoverPortal`.
-
-**Anchor positioning:** The `PopoverAnchor` is a `position:fixed` invisible span whose
-viewport coordinates are set at the moment the popover opens (`getSelectionRect(editor)`
-in `WysiwygEditor.tsx`). Radix reads the anchor element's `getBoundingClientRect()` to
-place the `PopoverContent`.
-
----
-
-### Embedding as a standalone prompt input (minimal mode)
-
-```tsx
-// Inline LLM prompt textarea — keyboard-only, no slash menu
-<WysiwygEditor
-  value={prompt}
-  onChange={setPrompt}
-  minimal={true}
-  placeholder="Describe what you want…"
-  className="border border-input rounded-md bg-background"
-/>
-```
-
-In minimal mode: no slash menu, but Ctrl+K link, image/table bubbles, and markdown
-input rules (including `[text](url)`) all still work.
-
----
-
-### Markdown serializer choice
-
-Uses `tiptap-markdown` (v0.9.x) which targets Tiptap v3.
-If it becomes unmaintained, the fallback is `prosemirror-markdown`'s
-`defaultMarkdownSerializer` wrapped in a custom Tiptap extension.
+| Bubble | `pluginKey` | `shouldShow` condition |
+|---|---|---|
+| `imageBubble` | `'imageBubble'` | `e.isActive('image')` |
+| `tableBubble` | `'tableBubble'` | inside table AND (empty selection OR CellSelection) AND not image |
+| `selectionBubble` | `'selectionBubble'` | non-empty TextSelection AND focused AND not codeBlock AND not image AND not mouseDown |
 
 ---
 
 ## Adding a new language
 
 **CodeEditor:** add to `LANG_EXTENSIONS` map in `CodeEditor.tsx`.
-Install the `@codemirror/lang-*` package first (`npm info` for latest version).
 
 **MarkdownRenderer:** add to `SUPPORTED_LANGUAGES` set and register with
 `SyntaxHighlighter.registerLanguage(...)` at the top of `MarkdownRenderer.tsx`.
-Import the language from `react-syntax-highlighter/dist/esm/languages/prism/<name>`.
 
-**WysiwygEditor:** no additional configuration — code blocks render as `<pre>` with
-a `wysiwyg-code-block` CSS class. Syntax highlighting in the WYSIWYG view is not
-currently implemented (by design — focus is on markdown fidelity, not live highlighting).
+**WysiwygEditor:** no config needed — code blocks render as `<pre class="wysiwyg-code-block">`.

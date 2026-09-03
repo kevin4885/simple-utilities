@@ -3,12 +3,13 @@
  *
  * Layout:
  *   Desktop (md+):
- *     [Left: collapsible palette] [Center: mode switcher + editor area] [Right: collapsible doc list]
+ *     [Center: mode switcher + editor area (with formatting toolbar)] [Right: collapsible doc list]
  *   Mobile (<md):
  *     Toolbar (mode switcher + actions) + editor area stacked, docs in Sheet
  *
  * Three editing modes via ToggleGroup:
- *   Visual    → WysiwygEditor (TipTap) — mounted only when active
+ *   Visual    → WysiwygEditor (TipTap) with sticky formatting toolbar and floating
+ *               selection toolbar — mounted only when active
  *   Markdown  → CodeEditor (CodeMirror, language="markdown") — mounted only when active
  *   Preview   → MarkdownRenderer — mounted only when active
  *
@@ -18,6 +19,12 @@
  *
  * Keyboard shortcuts dialog: the ? button opens a shadcn Dialog listing
  * all verified shortcuts.
+ *
+ * Phase 1 changes:
+ *   - Removed the left "Components" palette (ComponentPalette, PALETTE_GROUPS).
+ *     Formatting is now done via the WysiwygEditor toolbar (header) and the
+ *     floating selection toolbar.
+ *   - Desktop layout is now: [center editor][right docs] (2-pane).
  */
 
 import {
@@ -77,7 +84,6 @@ import {
   countChars,
   countLines,
   toSafeFilename,
-  PALETTE_GROUPS,
   KEYBOARD_SHORTCUTS,
 } from './logic'
 import { useVmeStore, type VmeDoc, type VmeModel } from './store'
@@ -108,44 +114,6 @@ function getTokenCount(text: string, model: VmeModel): number {
 
 function isApprox(model: VmeModel): boolean {
   return model !== 'gpt4o'
-}
-
-// ── ComponentPalette ──────────────────────────────────────────────────────────
-
-interface ComponentPaletteProps {
-  onInsert: (snippet: string) => void
-  disabled?: boolean
-}
-
-function ComponentPalette({ onInsert, disabled }: ComponentPaletteProps) {
-  return (
-    <div className={cn('flex flex-col gap-0 overflow-y-auto min-h-0', disabled && 'opacity-40 pointer-events-none')}>
-      {PALETTE_GROUPS.map((group) => (
-        <div key={group.group} className="border-b border-border last:border-0">
-          <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground bg-muted/40">
-            {group.group}
-          </div>
-          <div className="py-0.5">
-            {group.items.map((item) => (
-              <button
-                key={item.label}
-                title={item.description}
-                className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors hover:bg-accent/60 hover:text-accent-foreground"
-                onClick={() => onInsert(item.snippet)}
-              >
-                <span className="shrink-0 w-6 h-6 flex items-center justify-center rounded bg-muted text-[10px] font-mono font-bold text-muted-foreground">
-                  {item.icon}
-                </span>
-                <span className="min-w-0 flex flex-col">
-                  <span className="truncate font-medium">{item.label}</span>
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
-  )
 }
 
 // ── DocSidePanel ──────────────────────────────────────────────────────────────
@@ -497,7 +465,6 @@ export default function VisualMarkdownEditorPage() {
   const activeDoc = docs.find((d) => d.id === activeDocId) ?? docs[0]
 
   const [mode, setMode] = useState<EditorMode>('wysiwyg')
-  const [paletteOpen, setPaletteOpen] = useState(true)
   const [docsOpen, setDocsOpen] = useState(true)
   const [mobileDocsOpen, setMobileDocsOpen] = useState(false)
 
@@ -568,16 +535,7 @@ export default function VisualMarkdownEditorPage() {
     URL.revokeObjectURL(url)
   }
 
-  // ── Palette insert ─────────────────────────────────────────────────────────
-
-  function handlePaletteInsert(snippet: string) {
-    if (mode !== 'wysiwyg') return
-    const current = activeDoc.content
-    const separator = current && !current.endsWith('\n') ? '\n' : ''
-    handleContentChange(current + separator + snippet)
-  }
-
-  // ── Toolbar ────────────────────────────────────────────────────────────────
+  // ── Top toolbar (mode switcher + doc actions) ──────────────────────────────
 
   const modeIcons: Record<EditorMode, React.ReactNode> = {
     wysiwyg:  <Layers  className="h-3.5 w-3.5" />,
@@ -585,7 +543,7 @@ export default function VisualMarkdownEditorPage() {
     preview:  <Eye     className="h-3.5 w-3.5" />,
   }
 
-  const toolbar = (
+  const topToolbar = (
     <div className="flex items-center gap-1 px-2 py-1.5 border-b border-border bg-card shrink-0 min-w-0">
       {/* Mobile: doc list trigger */}
       <Sheet open={mobileDocsOpen} onOpenChange={setMobileDocsOpen}>
@@ -672,6 +630,7 @@ export default function VisualMarkdownEditorPage() {
             placeholder="Start writing… (type / for commands)"
             className="h-full"
             onChangeDebounceMs={150}
+            toolbar={true}
           />
         </div>
       )}
@@ -706,49 +665,9 @@ export default function VisualMarkdownEditorPage() {
       {/* ── Desktop layout (md+) ── */}
       <div className="hidden md:flex flex-1 min-h-0 overflow-hidden">
 
-        {/* LEFT: collapsible component palette */}
-        <Collapsible
-          open={paletteOpen}
-          onOpenChange={setPaletteOpen}
-          className="flex shrink-0"
-        >
-          <CollapsibleContent
-            className={cn(
-              'overflow-hidden border-r border-border bg-card flex flex-col',
-              paletteOpen ? 'w-44 lg:w-52' : 'w-0',
-            )}
-          >
-            {/* Palette header */}
-            <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
-              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                Components
-              </span>
-            </div>
-            <ComponentPalette
-              onInsert={handlePaletteInsert}
-              disabled={mode !== 'wysiwyg'}
-            />
-          </CollapsibleContent>
-
-          {/* Collapse/expand toggle */}
-          <CollapsibleTrigger asChild>
-            <button
-              className="shrink-0 flex items-center justify-center w-5 border-r border-border bg-muted/30 hover:bg-muted/60 transition-colors text-muted-foreground hover:text-foreground"
-              title={paletteOpen ? 'Hide palette' : 'Show palette'}
-              aria-label={paletteOpen ? 'Hide component palette' : 'Show component palette'}
-            >
-              {paletteOpen ? (
-                <ChevronLeft className="h-3 w-3" />
-              ) : (
-                <ChevronRight className="h-3 w-3" />
-              )}
-            </button>
-          </CollapsibleTrigger>
-        </Collapsible>
-
-        {/* CENTER: toolbar + editor */}
+        {/* CENTER: top toolbar + editor */}
         <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-          {toolbar}
+          {topToolbar}
           {editorArea}
           <StatusBar
             text={activeDoc.content}
@@ -798,7 +717,7 @@ export default function VisualMarkdownEditorPage() {
 
       {/* ── Mobile layout (<md) ── */}
       <div className="flex md:hidden flex-col flex-1 min-h-0 overflow-hidden">
-        {toolbar}
+        {topToolbar}
         {editorArea}
         <StatusBar
           text={activeDoc.content}

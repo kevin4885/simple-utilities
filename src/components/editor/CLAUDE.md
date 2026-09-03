@@ -10,7 +10,7 @@ These are hand-rolled app components — **not** shadcn/ui (which lives in `src/
 |---|---|---|
 | `CodeEditor.tsx` | `<CodeEditor>` | CodeMirror 6 editor — multi-language, themed, dark-aware |
 | `MarkdownRenderer.tsx` | `<MarkdownRenderer>` | react-markdown renderer — full element coverage, syntax-highlighted code blocks |
-| `WysiwygEditor.tsx` | `<WysiwygEditor>` | TipTap WYSIWYG editor — markdown in / markdown out, slash menu, bubble menus, tables, task lists |
+| `WysiwygEditor.tsx` | `<WysiwygEditor>` | TipTap WYSIWYG editor — markdown in / markdown out, slash menu, bubble menus (image + table), keyboard-first link editing |
 | `wysiwyg-utils.ts` | — | Pure helpers for WysiwygEditor — `normalizeUrl()` and future utils |
 | `wysiwyg-utils.test.ts` | — | Vitest unit tests for `wysiwyg-utils.ts` |
 
@@ -89,23 +89,31 @@ full VME tool page.
 
 - **shadcn/ui**: `popover`, `input`, `button`, `label` — required for the link/image
   popover forms. All must be present in `src/components/ui/`.
-- **@tiptap/react/menus**: `BubbleMenu` component — for link, image, and table
-  context toolbars. Ships with `@tiptap/react` v3 (no extra install needed).
+- **@tiptap/react/menus**: `BubbleMenu` component — for image and table context
+  toolbars. Ships with `@tiptap/react` v3 (no extra install needed).
 - **@tiptap/extension-bubble-menu**: underlying plugin (transitive dep of @tiptap/react).
 - **@floating-ui/dom**: positioning library used by BubbleMenu v3 (transitive dep of
   @tiptap/extension-bubble-menu — no extra install needed).
 
 ```tsx
-import WysiwygEditor from '@/components/editor/WysiwygEditor'
+import WysiwygEditor, { type WysiwygEditorHandle } from '@/components/editor/WysiwygEditor'
+import { useRef } from 'react'
+
+const editorRef = useRef<WysiwygEditorHandle>(null)
 
 <WysiwygEditor
+  ref={editorRef}
   value={markdownString}
-  onChange={(md) => setContent(md)}   // called on every edit
+  onChange={(md) => setContent(md)}   // debounced; called after 150ms idle
   placeholder="Start writing…"
   readOnly={false}
   className="h-full"
   minimal={false}                     // see below
+  onChangeDebounceMs={150}            // default; 0 = synchronous
 />
+
+// Flush before switching modes or unmounting:
+editorRef.current?.flush()
 ```
 
 ### Props
@@ -113,11 +121,45 @@ import WysiwygEditor from '@/components/editor/WysiwygEditor'
 | Prop | Type | Default | Description |
 |---|---|---|---|
 | `value` | `string` | — | **Required.** Markdown string — the single source of truth. |
-| `onChange` | `(md: string) => void` | — | Called with new markdown on every edit. |
+| `onChange` | `(md: string) => void` | — | Called with new markdown after debounce idle. |
 | `placeholder` | `string` | `'Start writing… (type / for commands)'` | Placeholder text when empty. |
 | `readOnly` | `boolean` | `false` | Disables editing. |
 | `className` | `string` | — | Extra wrapper classes. |
 | `minimal` | `boolean` | `false` | No slash menu — pure keyboard surface for inline embedding. |
+| `onChangeDebounceMs` | `number` | `150` | Debounce delay for onChange. 0 = synchronous. |
+
+### Imperative handle (`WysiwygEditorHandle`)
+
+| Method | Description |
+|---|---|
+| `flush()` | Run getMarkdown() + onChange immediately, cancelling any pending debounce. |
+
+**Call `flush()` before**:
+- Switching away from wysiwyg mode (so the store has the latest markdown before the editor unmounts)
+- Doc switching
+- Any action that reads `activeDoc.content` right after editor changes
+
+### Performance design
+
+1. **`lastEmittedMd` ref**: The sync-effect that sets content when `value` changes now
+   does a reference-equality check against `lastEmittedMd.current`. If they match,
+   it's a round-trip from our own edit → skip `getMarkdown()` and `setContent()`.
+   Only on genuine external changes (doc switch, Markdown-mode edit) does it call
+   `setContent(value, { emitUpdate: false })`.
+
+2. **Debounced emit**: `onUpdate` schedules `getMarkdown() + onChange()` after
+   `onChangeDebounceMs` (default 150ms) of idle. Rapid keystrokes only produce one
+   serialisation + one store write per pause. The timer is cancelled and rescheduled
+   on every update.
+
+3. **Flush points**: `flush()` is called synchronously on editor blur and when
+   `readOnly` flips. The unmount cleanup only cancels the pending timer — to avoid
+   losing the last ≤150ms of edits, the tool page calls `flush()` imperatively
+   before mode switches and doc switches.
+
+4. **Cancelled on external setContent**: If a pending debounce timer exists when an
+   external value arrives, it is cancelled before `setContent()` to prevent the
+   old snapshot from overwriting the new content.
 
 ### Key notes
 
@@ -129,70 +171,80 @@ import WysiwygEditor from '@/components/editor/WysiwygEditor'
 - **Markdown input rules** auto-convert as you type: `# `…`###### ` headings, `- `/`* `
   bullet list, `1. ` ordered list, `[ ] `/`[x] ` task list, `> ` blockquote,
   ` ``` ` fenced code block, `---` horizontal rule, plus inline `**bold**`, `*italic*`,
-  `~~strike~~`, `` `code` ``.
-- **Slash menu** (when `minimal=false`): type `/` to open a command palette. Arrow keys
-  navigate, Enter selects, Escape closes. Supports all block and inline components.
-- **Table keyboard UX**: Tab/Shift-Tab move between cells; Enter adds a new row when on
-  the last cell of the last row.
+  `~~strike~~`, `` `code` ``, and `[text](url)` → link mark.
+- **Table keyboard UX**: Tab/Shift-Tab move between cells; Tab on last cell adds a new
+  row. Additional shortcuts via `linkKeyboard` extension (see below).
 - **Dark mode**: tracked via `MutationObserver` on `document.documentElement.classList` —
   same pattern as `CodeEditor` and `MarkdownRenderer`.
 - **External value sync**: when the `value` prop changes (e.g. doc switch), the editor
-  calls `setContent(value, { emitUpdate: false })` without triggering `onChange`, so the
-  cursor position resets cleanly. A suppress-flag prevents the round-trip loop.
+  calls `setContent(value, { emitUpdate: false })` without triggering `onChange`.
+  The `lastEmittedMd` ref prevents round-trip re-syncs.
 - **minimal=true use case**: inline embedding for LLM prompt inputs. No slash menu popup;
-  link/image/table bubble menus still work; markdown input rules and full keyboard
+  Ctrl+K link, image/table bubble menus, markdown input rules, and full keyboard
   editing still work.
 
 ---
 
-### Link editing
+### Link editing (keyboard-first)
 
-The link interaction model is entirely mouse-driven (no `window.prompt`):
+Links are keyboard-driven. The link bubble toolbar has been removed.
 
-1. **Inserting a new link (no selection):** type `/link` in the slash menu and press
-   Enter — a popover form appears with **Text** and **URL** fields. Type the text and URL,
-   press Enter or click Save. The text is inserted at the cursor as a hyperlink.
+| Action | How |
+|---|---|
+| Insert a new link | `Ctrl+K` / `Cmd+K` — opens LinkPopover with Text + URL fields; Tab through fields, Enter to save, Escape to cancel |
+| Edit an existing link | Place caret inside link → `Ctrl+K` — popover opens prefilled with current text + href |
+| Wrap selection in link | Select text → `Ctrl+K` — popover opens with Text prefilled from selection |
+| Remove link | `Ctrl+Shift+K` — unlinks immediately without a dialog |
+| Insert via slash menu | Type `/link` → Enter — same popover |
+| Markdown input rule | Type `[text](url)` + Space — auto-converts to a real link mark |
 
-2. **Inserting a link over a selection:** select text first, then type `/link`. The
-   **Text** field is prefilled from the selection. Enter a URL and Save to wrap the
-   selected text in a link.
+**After save/cancel/unlink**: editor focus is automatically returned so the user can keep typing.
 
-3. **Editing an existing link:** click inside any existing link or place the caret
-   inside it. A **bubble toolbar** appears below the link showing:
-   - The truncated URL
-   - **Open** button (opens URL in new tab)
-   - **Edit** button (opens the popover prefilled with current text + href)
-   - **Unlink** button (removes the link mark, leaves text)
+**URL normalisation** (`normalizeUrl()` in `wysiwyg-utils.ts`):
+- Trims whitespace.
+- Empty → no-op (treated as "remove link").
+- Leaves `#anchor`, `/path`, `./rel`, `../up` unchanged.
+- Leaves `https://`, `mailto:`, `tel:`, `data:`, `ftp://`, etc. unchanged.
+- Prepends `https://` to bare domains and `host:port` URLs.
+- Blocks `javascript:` and `vbscript:` (returns `''`).
 
-4. **URL normalisation** (`normalizeUrl()` in `wysiwyg-utils.ts`):
-   - Trims whitespace.
-   - Empty → no-op (treated as "remove link").
-   - Leaves `#anchor`, `/path`, `./rel`, `../up` unchanged.
-   - Leaves `https://`, `mailto:`, `tel:`, `data:`, `ftp://`, etc. unchanged.
-   - Prepends `https://` to bare domains and `host:port` URLs.
-   - Blocks `javascript:` and `vbscript:` (returns `''`).
+---
+
+### Markdown link input rule
+
+Typing `[text](url)` followed by a space (or at end of line) auto-converts the
+bracket-paren syntax into a real link mark. The regex is exported as `MARKDOWN_LINK_REGEX`
+for testing.
+
+**Negative cases handled** (these are NOT converted):
+- `[ ]` — task list unchecked (empty text)
+- `[x]` — task list checked (single letter text)
+- `[foo]` — no parenthesised URL
+- `[text]()` — empty URL
 
 ---
 
 ### Image editing
 
-The image interaction model is entirely mouse-driven (no `window.prompt`):
+The image interaction model is mouse-driven (popover via bubble menu):
 
 1. **Inserting a new image:** type `/image` in the slash menu — a popover form appears
-   with **Image URL** and **Alt text** fields. Accepts HTTPS URLs *and* base64 `data:`
-   URIs (for local/pasted images).
+   with **Image URL** and **Alt text** fields.
 
 2. **Editing an existing image:** click the image to select it. A **bubble toolbar**
    appears below with:
    - **Edit** button (reopens the popover prefilled with current src + alt)
    - **Remove** button (deletes the image node)
 
+After save/cancel/remove, focus is returned to the editor.
+
 ---
 
 ### Table editing
 
-Table keyboard shortcuts remain unchanged (Tab / Shift-Tab / Enter).  
-A **bubble toolbar** also appears above any table when the cursor is inside it:
+Tab / Shift-Tab move between cells; Tab on last cell of last row adds a row.
+
+**Bubble toolbar** (appears above the table when cursor is inside):
 
 | Button | Action |
 |---|---|
@@ -204,7 +256,27 @@ A **bubble toolbar** also appears above any table when the cursor is inside it:
 | Delete column | `deleteColumn()` |
 | Delete table | `deleteTable()` |
 
-All buttons carry `title` and `aria-label` tooltips.
+**Keyboard shortcuts** (via `linkKeyboard` extension):
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+Enter` | Add row after (only inside table) |
+| `Ctrl+Shift+Enter` | Add row before (only inside table) |
+| `Ctrl+Alt+→` | Add column after (only inside table) |
+| `Ctrl+Alt+←` | Add column before (only inside table) |
+| `Ctrl+Alt+Backspace` | Delete row (only inside table) |
+
+Shortcuts that don't match (not inside a table) return `false` so the keys fall through to other handlers.
+
+---
+
+### `linkKeyboard` extension
+
+A single TipTap `Extension` registered for all non-minimal instances. Provides:
+- `Mod-k` → open LinkPopover (calls `openLinkRef.current()`)
+- `Mod-Shift-k` → unlink (extendMarkRange + unsetLink)
+- Table keyboard shortcuts (see above)
+- `[text](url)` InputRule → real link mark
 
 ---
 
@@ -214,13 +286,12 @@ TipTap v3's `BubbleMenu` (from `@tiptap/react/menus`) uses **@floating-ui/dom** 
 positioning — not Tippy.js. The prop is `options={{ placement: 'bottom' }}` (not
 `tippyOptions`).
 
-Three `BubbleMenu` instances are registered; they gate each other via `shouldShow`:
+**Two** `BubbleMenu` instances remain (link bubble removed):
 
 | Bubble | shouldShow condition |
 |---|---|
-| `linkBubble` | `e.isActive('link') && !e.isActive('image')` |
 | `imageBubble` | `e.isActive('image')` |
-| `tableBubble` | `e.isActive('table') && !e.isActive('link') && !e.isActive('image')` |
+| `tableBubble` | `e.isActive('table') && !e.isActive('image')` |
 
 This ensures only one bubble menu is ever visible at a time.
 
@@ -230,22 +301,7 @@ bubble toolbars — they are portalled to `<body>` by Radix UI's `PopoverPortal`
 **Anchor positioning:** The `PopoverAnchor` is a `position:fixed` invisible span whose
 viewport coordinates are set at the moment the popover opens (`getSelectionRect(editor)`
 in `WysiwygEditor.tsx`). Radix reads the anchor element's `getBoundingClientRect()` to
-place the `PopoverContent`, so the form appears adjacent to the selected link text or
-image rather than at the page corner.
-
-- For **link/text selections**, `editor.view.coordsAtPos(from/to)` returns viewport coords.
-- For **image node selections**, `editor.view.nodeDOM(pos).getBoundingClientRect()` returns
-  the image element's exact bounds (coordsAtPos only gives the cursor position *before*
-  the node, not the visual image bounds).
-
-The anchor rect is captured once when the popover opens; it is not recalculated while open.
-`position:fixed` is used so viewport coords from coordsAtPos/getBoundingClientRect map
-directly without page-scroll offset math.
-
-Inner form components (`LinkForm`, `ImageForm`) are remounted via a `key` prop
-whenever the popover (re-)opens — this resets `useState` initializers cleanly without
-needing a `useEffect + setState` pattern (which would trigger the
-`react-hooks/set-state-in-effect` lint rule).
+place the `PopoverContent`.
 
 ---
 
@@ -261,6 +317,9 @@ needing a `useEffect + setState` pattern (which would trigger the
   className="border border-input rounded-md bg-background"
 />
 ```
+
+In minimal mode: no slash menu, but Ctrl+K link, image/table bubbles, and markdown
+input rules (including `[text](url)`) all still work.
 
 ---
 

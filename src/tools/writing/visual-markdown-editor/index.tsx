@@ -8,12 +8,16 @@
  *     Toolbar (mode switcher + actions) + editor area stacked, docs in Sheet
  *
  * Three editing modes via ToggleGroup:
- *   Visual    → WysiwygEditor (TipTap)
- *   Markdown  → CodeEditor (CodeMirror, language="markdown")
- *   Preview   → MarkdownRenderer
+ *   Visual    → WysiwygEditor (TipTap) — mounted only when active
+ *   Markdown  → CodeEditor (CodeMirror, language="markdown") — mounted only when active
+ *   Preview   → MarkdownRenderer — mounted only when active
  *
  * All three modes share the same markdown string from the store.
- * Switching modes never loses content.
+ * Switching modes never loses content (content is in the store; WysiwygEditor
+ * flushes its pending debounced onChange before unmounting).
+ *
+ * Keyboard shortcuts dialog: the ? button opens a shadcn Dialog listing
+ * all verified shortcuts.
  */
 
 import {
@@ -21,7 +25,7 @@ import {
   useEffect,
   useRef,
   useCallback,
-  useDeferredValue,
+  useMemo,
 } from 'react'
 import {
   ChevronLeft,
@@ -37,8 +41,10 @@ import {
   Layers,
   Eye,
   Code2,
+  KeyboardIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useDebouncedValue } from '@/lib/useDebouncedValue'
 import { Button } from '@/components/ui/button'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
@@ -53,8 +59,15 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog'
 import { Separator } from '@/components/ui/separator'
-import WysiwygEditor from '@/components/editor/WysiwygEditor'
+import WysiwygEditor, { type WysiwygEditorHandle } from '@/components/editor/WysiwygEditor'
 import CodeEditor from '@/components/editor/CodeEditor'
 import MarkdownRenderer from '@/components/editor/MarkdownRenderer'
 import {
@@ -65,6 +78,7 @@ import {
   countLines,
   toSafeFilename,
   PALETTE_GROUPS,
+  KEYBOARD_SHORTCUTS,
 } from './logic'
 import { useVmeStore, type VmeDoc, type VmeModel } from './store'
 
@@ -99,9 +113,7 @@ function isApprox(model: VmeModel): boolean {
 // ── ComponentPalette ──────────────────────────────────────────────────────────
 
 interface ComponentPaletteProps {
-  /** Inserts a markdown snippet at the cursor (or appends to WYSIWYG editor) */
   onInsert: (snippet: string) => void
-  /** True when the WYSIWYG editor is not the active mode */
   disabled?: boolean
 }
 
@@ -287,7 +299,6 @@ function InlineTitle({ title, onRename }: InlineTitleProps) {
   const inputRef = useRef<HTMLInputElement>(null)
 
   function startEdit() {
-    // Always refresh value from current title prop when entering edit mode
     setValue(title)
     setEditing(true)
     setTimeout(() => inputRef.current?.select(), 0)
@@ -351,6 +362,61 @@ function CopyButton({ getText, label }: { getText: () => string; label: string }
   )
 }
 
+// ── ShortcutsDialog ───────────────────────────────────────────────────────────
+
+/** Groups shortcuts by category for display. */
+function ShortcutsDialog() {
+  const grouped = useMemo(() => {
+    const map = new Map<string, typeof KEYBOARD_SHORTCUTS>()
+    for (const s of KEYBOARD_SHORTCUTS) {
+      const arr = map.get(s.category) ?? []
+      arr.push(s)
+      map.set(s.category, arr)
+    }
+    return map
+  }, [])
+
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 shrink-0"
+          title="Keyboard shortcuts"
+          aria-label="Show keyboard shortcuts"
+        >
+          <KeyboardIcon className="h-4 w-4" />
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Keyboard Shortcuts</DialogTitle>
+        </DialogHeader>
+        <div className="flex flex-col gap-4 pt-2">
+          {Array.from(grouped.entries()).map(([category, shortcuts]) => (
+            <div key={category}>
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                {category}
+              </div>
+              <div className="flex flex-col gap-1">
+                {shortcuts.map((s) => (
+                  <div key={s.keys} className="flex items-center justify-between gap-4 text-sm">
+                    <span className="text-foreground">{s.description}</span>
+                    <kbd className="shrink-0 text-[11px] font-mono bg-muted text-muted-foreground px-1.5 py-0.5 rounded border border-border whitespace-nowrap">
+                      {s.keys}
+                    </kbd>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ── StatusBar ─────────────────────────────────────────────────────────────────
 
 interface StatusBarProps {
@@ -360,12 +426,15 @@ interface StatusBarProps {
 }
 
 function StatusBar({ text, model, onModelChange }: StatusBarProps) {
-  const deferredText = useDeferredValue(text)
-  const tokens = getTokenCount(deferredText, model)
+  // Debounce the text used for counting to ~300ms so heavy counts don't run
+  // on every keystroke.
+  const deferredText = useDebouncedValue(text, 300)
+
+  const tokens = useMemo(() => getTokenCount(deferredText, model), [deferredText, model])
   const approx  = isApprox(model)
-  const words    = countWords(deferredText)
-  const chars    = countChars(deferredText)
-  const lines    = countLines(deferredText)
+  const words    = useMemo(() => countWords(deferredText),  [deferredText])
+  const chars    = useMemo(() => countChars(deferredText),  [deferredText])
+  const lines    = useMemo(() => countLines(deferredText),  [deferredText])
 
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1.5 border-t border-border bg-muted/40 text-xs text-muted-foreground shrink-0">
@@ -432,6 +501,9 @@ export default function VisualMarkdownEditorPage() {
   const [docsOpen, setDocsOpen] = useState(true)
   const [mobileDocsOpen, setMobileDocsOpen] = useState(false)
 
+  // Ref to WysiwygEditor's imperative handle for flushing before mode switch
+  const wysiwygRef = useRef<WysiwygEditorHandle>(null)
+
   // Inactivity auto-version timer
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -452,11 +524,27 @@ export default function VisualMarkdownEditorPage() {
     }, INACTIVITY_MS)
   }
 
+  // ── Mode switch ────────────────────────────────────────────────────────────
+
+  function handleModeChange(newMode: EditorMode) {
+    if (newMode === mode) return
+    // Before leaving wysiwyg mode, flush any pending debounced onChange so
+    // the store has the latest markdown before the editor unmounts.
+    if (mode === 'wysiwyg') {
+      wysiwygRef.current?.flush()
+    }
+    setMode(newMode)
+  }
+
   // ── Doc switch ─────────────────────────────────────────────────────────────
 
   const switchDoc = useCallback(
     (newId: string) => {
       if (newId === activeDocId) return
+      // Flush wysiwyg before switching
+      if (mode === 'wysiwyg') {
+        wysiwygRef.current?.flush()
+      }
       if (inactivityTimerRef.current) {
         clearTimeout(inactivityTimerRef.current)
         inactivityTimerRef.current = null
@@ -465,7 +553,7 @@ export default function VisualMarkdownEditorPage() {
       setActiveDoc(newId)
       setMobileDocsOpen(false)
     },
-    [activeDocId, setActiveDoc, saveVersion],
+    [activeDocId, mode, setActiveDoc, saveVersion],
   )
 
   // ── Download ───────────────────────────────────────────────────────────────
@@ -481,15 +569,10 @@ export default function VisualMarkdownEditorPage() {
   }
 
   // ── Palette insert ─────────────────────────────────────────────────────────
-  // In WYSIWYG mode the WysiwygEditor accepts value/onChange, so we inject
-  // the snippet by appending to the markdown string then letting tiptap-markdown
-  // re-parse. This is simpler than imperative editor.commands.insertContent()
-  // and works correctly for all snippet types.
 
   function handlePaletteInsert(snippet: string) {
     if (mode !== 'wysiwyg') return
     const current = activeDoc.content
-    // Add newline separator if content doesn't end with newline
     const separator = current && !current.endsWith('\n') ? '\n' : ''
     handleContentChange(current + separator + snippet)
   }
@@ -541,7 +624,7 @@ export default function VisualMarkdownEditorPage() {
       <ToggleGroup
         type="single"
         value={mode}
-        onValueChange={(v) => { if (v) setMode(v as EditorMode) }}
+        onValueChange={(v) => { if (v) handleModeChange(v as EditorMode) }}
         className="gap-0 shrink-0"
       >
         {(['wysiwyg', 'markdown', 'preview'] as EditorMode[]).map((m) => (
@@ -559,7 +642,7 @@ export default function VisualMarkdownEditorPage() {
 
       <Separator orientation="vertical" className="h-5 mx-0.5 hidden sm:block" />
 
-      {/* Copy + Download */}
+      {/* Copy + Download + Shortcuts */}
       <CopyButton getText={() => activeDoc.content} label="Copy markdown" />
       <Button
         variant="ghost"
@@ -572,40 +655,46 @@ export default function VisualMarkdownEditorPage() {
         <Download className="h-3.5 w-3.5" />
         <span className="hidden sm:inline">.md</span>
       </Button>
+      <ShortcutsDialog />
     </div>
   )
 
-  // ── Editor area ────────────────────────────────────────────────────────────
+  // ── Editor area (conditional rendering — only active mode is mounted) ───────
 
   const editorArea = (
     <div className="flex-1 min-h-0 overflow-hidden">
-      {/* WYSIWYG mode */}
-      <div className={cn('h-full overflow-y-auto', mode !== 'wysiwyg' && 'hidden')}>
-        <WysiwygEditor
-          value={activeDoc.content}
-          onChange={handleContentChange}
-          placeholder="Start writing… (type / for commands)"
-          className="h-full"
-        />
-      </div>
+      {mode === 'wysiwyg' && (
+        <div className="h-full overflow-y-auto">
+          <WysiwygEditor
+            ref={wysiwygRef}
+            value={activeDoc.content}
+            onChange={handleContentChange}
+            placeholder="Start writing… (type / for commands)"
+            className="h-full"
+            onChangeDebounceMs={150}
+          />
+        </div>
+      )}
 
-      {/* Markdown mode */}
-      <div className={cn('h-full overflow-hidden', mode !== 'markdown' && 'hidden')}>
-        <CodeEditor
-          value={activeDoc.content}
-          onChange={handleContentChange}
-          language="markdown"
-          height="100%"
-          className="h-full"
-          placeholder="Write markdown here…"
-          basicSetup={{ lineNumbers: false, foldGutter: false, highlightActiveLine: true, history: true }}
-        />
-      </div>
+      {mode === 'markdown' && (
+        <div className="h-full overflow-hidden">
+          <CodeEditor
+            value={activeDoc.content}
+            onChange={handleContentChange}
+            language="markdown"
+            height="100%"
+            className="h-full"
+            placeholder="Write markdown here…"
+            basicSetup={{ lineNumbers: false, foldGutter: false, highlightActiveLine: true, history: true }}
+          />
+        </div>
+      )}
 
-      {/* Preview mode */}
-      <div className={cn('h-full overflow-y-auto px-5 py-4', mode !== 'preview' && 'hidden')}>
-        <MarkdownRenderer content={activeDoc.content} />
-      </div>
+      {mode === 'preview' && (
+        <div className="h-full overflow-y-auto px-5 py-4">
+          <MarkdownRenderer content={activeDoc.content} />
+        </div>
+      )}
     </div>
   )
 
@@ -717,9 +806,6 @@ export default function VisualMarkdownEditorPage() {
           onModelChange={setModel}
         />
       </div>
-
-      {/* Panel toggle buttons for desktop — accessible via button in toolbar */}
-      {/* Palette and docs panel triggers are built into the Collapsible above */}
 
     </div>
   )

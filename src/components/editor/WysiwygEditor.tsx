@@ -15,15 +15,12 @@
  * DOMRect. @floating-ui/dom is available as a transitive dep but not needed.
  *
  * BUBBLE MENUS (BubbleMenu from @tiptap/react/menus):
- *   Three bubble menus are registered; only one can show at a time, gated by
- *   precise shouldShow callbacks so they never fight each other:
- *     1. LinkBubble  — when link mark is active (and image NOT selected)
- *     2. ImageBubble — when image node is selected
- *     3. TableBubble — when cursor is inside a table (and no link / image)
+ *   Two bubble menus remain (image and table); the link bubble has been removed.
+ *   Only one can show at a time, gated by precise shouldShow callbacks:
+ *     1. ImageBubble — when image node is selected
+ *     2. TableBubble — when cursor is inside a table (and no image selected)
  *
- *   Popover forms (shadcn Popover + Input + Button + Label) are used for
- *   inserting/editing links and images. The BubbleMenus host small inline
- *   toolbars; edit actions open the corresponding popover programmatically.
+ *   Link editing is keyboard-first via Ctrl+K / Cmd+K.
  *
  * URL normalisation: normalizeUrl() (src/components/editor/wysiwyg-utils.ts)
  *   prepends https:// to bare domains; leaves mailto:, #anchors, data: URIs,
@@ -31,15 +28,44 @@
  *
  * Props
  * ─────
- *   value       — markdown string (single source of truth)
- *   onChange    — called with new markdown on every edit
- *   placeholder — placeholder text when empty
- *   readOnly    — disables editing
- *   className   — extra wrapper classes
- *   minimal     — when true: no slash menu; pure keyboard surface for inline
- *                 embedding (e.g. LLM prompt input). Input rules still apply.
- *                 Link/Image/Table bubble menus still work in minimal mode
- *                 (they are useful even in inline embedding).
+ *   value              — markdown string (single source of truth)
+ *   onChange           — called with new markdown (debounced; see below)
+ *   placeholder        — placeholder text when empty
+ *   readOnly           — disables editing
+ *   className          — extra wrapper classes
+ *   minimal            — when true: no slash menu; pure keyboard surface for
+ *                        inline embedding. Ctrl+K, input rules, image/table
+ *                        bubbles still work in minimal mode.
+ *   onChangeDebounceMs — debounce delay for onChange (default 150; 0 = sync)
+ *   ref (forwarded)    — exposes { flush(): void } to flush pending onChange
+ *                        immediately (call before switching modes).
+ *
+ * Performance
+ * ───────────
+ *   • lastEmittedMd ref: skips getMarkdown() in the sync-effect when the
+ *     value prop equals what was last emitted (i.e. our own edit round-trip).
+ *   • Debounced emit: onChange is called after 150 ms idle (not per keystroke).
+ *     Flush is called synchronously on: blur, readOnly flip, and imperatively
+ *     before mode switches (call flush() before unmounting to avoid losing the
+ *     last <150ms of edits; the unmount cleanup only cancels the pending timer).
+ *   • Pending debounce is cancelled before applying an external setContent.
+ *
+ * Keyboard shortcuts (non-StarterKit)
+ * ────────────────────────────────────
+ *   Mod-k       — open LinkPopover (insert / edit link)
+ *   Mod-Shift-k — unlink (extendMarkRange + unsetLink)
+ *   Table shortcuts (only when cursor is inside a table):
+ *     Mod-Enter           — addRowAfter
+ *     Mod-Shift-Enter     — addRowBefore
+ *     Mod-Alt-ArrowRight  — addColumnAfter
+ *     Mod-Alt-ArrowLeft   — addColumnBefore
+ *     Mod-Alt-Backspace   — deleteRow
+ *
+ * Markdown input rule
+ * ───────────────────
+ *   Typing `[text](url)` followed by a space (or Enter at end of line)
+ *   converts the bracket-paren syntax into a real link mark.
+ *   Negative cases: `[ ]`, `[x]`, `[foo]` without `(url)` are NOT converted.
  *
  * Dark mode: tracked via MutationObserver on document.documentElement.classList,
  * same pattern as CodeEditor.tsx / MarkdownRenderer.tsx.
@@ -50,10 +76,12 @@
 import {
   useCallback,
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  forwardRef,
   type CSSProperties,
 } from 'react'
 import { createPortal } from 'react-dom'
@@ -77,16 +105,14 @@ import type {
   SuggestionKeyDownProps,
   SuggestionProps,
 } from '@tiptap/suggestion'
-import { Extension } from '@tiptap/core'
+import { Extension, InputRule } from '@tiptap/core'
 import type { Editor } from '@tiptap/core'
 import {
   RowsIcon,
   TableIcon,
   Columns3Icon,
   Trash2Icon,
-  ExternalLinkIcon,
   PencilIcon,
-  UnlinkIcon,
   MinusIcon,
   PlusIcon,
 } from 'lucide-react'
@@ -112,10 +138,6 @@ interface SlashCommand {
   icon: string
   action: (editor: Editor, openLinkPopover: () => void, openImagePopover: () => void) => void
 }
-
-// The slash command for link will call openLinkPopover (injected at runtime).
-// The slash command for image will call openImagePopover (injected at runtime).
-// This avoids window.prompt entirely.
 
 const SLASH_COMMANDS: SlashCommand[] = [
   {
@@ -240,10 +262,9 @@ const SLASH_COMMANDS: SlashCommand[] = [
   },
   {
     title: 'Link',
-    description: 'Insert a hyperlink',
+    description: 'Insert a hyperlink (Ctrl+K)',
     keywords: ['link', 'href', 'url', 'a', 'anchor'],
     icon: '🔗',
-    // openLinkPopover is injected at runtime via the slash command dispatch
     action: (_e, openLinkPopover) => {
       openLinkPopover()
     },
@@ -253,7 +274,6 @@ const SLASH_COMMANDS: SlashCommand[] = [
     description: 'Insert an image by URL',
     keywords: ['image', 'img', 'picture', 'photo', '![]'],
     icon: '🖼',
-    // openImagePopover is injected at runtime via the slash command dispatch
     action: (_e, _openLink, openImagePopover) => {
       openImagePopover()
     },
@@ -290,8 +310,6 @@ function SlashMenuInner({
   const [selectedIndex, setSelectedIndex] = useState(0)
   const menuRef = useRef<HTMLDivElement>(null)
 
-  // Expose keyboard handler to the Suggestion plugin via ref
-  // (runs after every render — always closes over current state + items)
   useLayoutEffect(() => {
     handleRef.current = {
       onKeyDown({ event }: SuggestionKeyDownProps) {
@@ -316,7 +334,6 @@ function SlashMenuInner({
     }
   })
 
-  // Scroll selected item into view
   useEffect(() => {
     const el = menuRef.current?.querySelector<HTMLElement>(`[data-idx="${selectedIndex}"]`)
     el?.scrollIntoView({ block: 'nearest' })
@@ -371,7 +388,6 @@ function SlashMenuPortal({
 }: SlashMenuPortalProps) {
   const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 })
 
-  // Position the menu below the cursor
   useEffect(() => {
     function recompute() {
       const rect = clientRect()
@@ -405,7 +421,6 @@ function SlashMenuPortal({
       }}
       className="wysiwyg-slash-menu"
     >
-      {/* key=itemsVersion resets selectedIndex to 0 whenever items change */}
       <SlashMenuInner
         key={itemsVersion}
         items={items}
@@ -421,17 +436,12 @@ function SlashMenuPortal({
 
 // ---------------------------------------------------------------------------
 // Slash-command Suggestion extension
-// Bridges the ProseMirror plugin lifecycle into React state via stable refs.
 // ---------------------------------------------------------------------------
 
 function buildSlashExtension(
-  /** Stable ref to a setter for React slash-menu state */
   setMenuRef: React.MutableRefObject<((s: SlashMenuState | null) => void) | null>,
-  /** Ref that SlashMenuInner will populate with its onKeyDown handler */
   handleRef: React.MutableRefObject<SlashMenuHandle | null>,
-  /** Ref to the openLinkPopover callback (populated after component mounts) */
   openLinkRef: React.MutableRefObject<(() => void) | null>,
-  /** Ref to the openImagePopover callback (populated after component mounts) */
   openImageRef: React.MutableRefObject<(() => void) | null>,
 ): Extension {
   let itemsVersion = 0
@@ -454,7 +464,6 @@ function buildSlashExtension(
             props: SlashCommand
           }) {
             editor.chain().focus().deleteRange(range).run()
-            // Inject the popover openers into the action call
             props.action(editor, () => {
               openLinkRef.current?.()
             }, () => {
@@ -517,10 +526,127 @@ function buildSlashExtension(
 }
 
 // ---------------------------------------------------------------------------
+// Link keyboard extension (Mod-k / Mod-Shift-k) + input rule [text](url)
+// ---------------------------------------------------------------------------
+
+/**
+ * Matches `[text](url)` followed by a space or at end-of-line.
+ * Capture groups:
+ *   [1] text between [ ]
+ *   [2] url between ( )
+ *
+ * Negative cases handled:
+ *   - `[ ]` (task list unchecked) — empty text after trim
+ *   - `[x]` or `[X]` (task list checked) — single letter, rejected by handler
+ *   - `[foo]` without `(url)` — regex won't match
+ *   - `[text]()` — empty url, regex requires 1+ chars in url group
+ *
+ * Note: single char link text like `[x](https://x.com)` is also blocked by
+ * the handler guard as an intentional task-list disambiguation tradeoff.
+ * The trailing space triggers via `addInputRules` (TipTap processes on space/Enter).
+ */
+export const MARKDOWN_LINK_REGEX = /\[([^\]]+)\]\(([^)]+)\)\s?$/
+
+/**
+ * Builds the link keyboard extension: Mod-k opens the link popover,
+ * Mod-Shift-k removes the link mark, table keyboard shortcuts.
+ *
+ * Table shortcuts only fire when the caret is inside a table; otherwise
+ * they return false so the key falls through to other handlers.
+ */
+function buildLinkKeyboardExtension(
+  openLinkRef: React.MutableRefObject<(() => void) | null>,
+): Extension {
+  return Extension.create({
+    name: 'linkKeyboard',
+    addKeyboardShortcuts() {
+      return {
+        // Open link popover
+        'Mod-k': () => {
+          openLinkRef.current?.()
+          return true
+        },
+        // Remove link mark
+        'Mod-Shift-k': ({ editor }) => {
+          if (!editor.isActive('link')) return false
+          editor.chain().focus().extendMarkRange('link').unsetLink().run()
+          return true
+        },
+        // Table shortcuts — only when inside a table
+        'Mod-Enter': ({ editor }) => {
+          if (!editor.isActive('table')) return false
+          editor.chain().focus().addRowAfter().run()
+          return true
+        },
+        'Mod-Shift-Enter': ({ editor }) => {
+          if (!editor.isActive('table')) return false
+          editor.chain().focus().addRowBefore().run()
+          return true
+        },
+        'Mod-Alt-ArrowRight': ({ editor }) => {
+          if (!editor.isActive('table')) return false
+          editor.chain().focus().addColumnAfter().run()
+          return true
+        },
+        'Mod-Alt-ArrowLeft': ({ editor }) => {
+          if (!editor.isActive('table')) return false
+          editor.chain().focus().addColumnBefore().run()
+          return true
+        },
+        'Mod-Alt-Backspace': ({ editor }) => {
+          if (!editor.isActive('table')) return false
+          editor.chain().focus().deleteRow().run()
+          return true
+        },
+      }
+    },
+    addInputRules() {
+      const linkType = this.editor.schema.marks.link
+      if (!linkType) return []
+
+      return [
+        new InputRule({
+          find: MARKDOWN_LINK_REGEX,
+          handler({ state, range, match }) {
+            const text = match[1]
+            const rawUrl = match[2]
+            if (!text || !rawUrl) return null
+
+            // Reject single char task-list matches: [ ] or [x]
+            if (text.trim().length <= 1 && /^[\s xX]$/.test(text)) return null
+
+            const href = normalizeUrl(rawUrl)
+            if (!href) return null
+
+            const { tr } = state
+            // Replace the full match (including trailing space) with linked text
+            const fullMatch = match[0]
+            const hasTrailingSpace = fullMatch.endsWith(' ')
+            const linkText = text
+            const from = range.from
+            const to = range.to
+
+            tr.delete(from, to)
+            const linkMark = linkType.create({ href })
+            const textNode = state.schema.text(linkText, [linkMark])
+            tr.insert(from, textNode)
+            // Remove the link mark from cursor so subsequent typing is plain
+            tr.removeStoredMark(linkType)
+            // Add the trailing space back (outside the link)
+            if (hasTrailingSpace) {
+              tr.insertText(' ', from + linkText.length)
+            }
+          },
+        }),
+      ]
+    },
+  })
+}
+
+// ---------------------------------------------------------------------------
 // Selection-rect helper — used to anchor popovers to the current selection
 // ---------------------------------------------------------------------------
 
-/** Viewport-relative bounding box of the current editor selection. */
 interface SelectionRect {
   top: number
   left: number
@@ -528,25 +654,11 @@ interface SelectionRect {
   height: number
 }
 
-/**
- * Returns the viewport rect of the current ProseMirror selection so the
- * Radix PopoverAnchor can be placed exactly at the selected content.
- *
- * Strategy:
- *   • Image (node selection): editor.view.nodeDOM(pos) gives the actual
- *     <img> element whose getBoundingClientRect() returns exact image bounds.
- *     coordsAtPos on a node position only returns the cursor position *before*
- *     the node, not the node's visual bounds — so nodeDOM is preferred here.
- *   • Text / mark selections (links, plain text): coordsAtPos(from) and
- *     coordsAtPos(to) return viewport {top,left,bottom,right} coords and are
- *     the most reliable source for text-based selections.
- */
 function getSelectionRect(editor: Editor): SelectionRect | null {
   const { state, view } = editor
   const { selection } = state
 
   try {
-    // Image node selection — get the image element's actual bounding rect.
     if (editor.isActive('image')) {
       const nodeDom = view.nodeDOM(selection.from)
       if (nodeDom instanceof Element) {
@@ -555,15 +667,12 @@ function getSelectionRect(editor: Editor): SelectionRect | null {
       }
     }
 
-    // Text / mark selection (or cursor inside a link mark).
-    // coordsAtPos returns viewport coordinates — no scroll math needed.
     const fromCoords = view.coordsAtPos(selection.from)
     const toCoords   = view.coordsAtPos(Math.max(selection.from, selection.to))
     const top    = Math.min(fromCoords.top,    toCoords.top)
     const left   = Math.min(fromCoords.left,   toCoords.left)
     const bottom = Math.max(fromCoords.bottom, toCoords.bottom)
     const right  = Math.max(fromCoords.right,  toCoords.right)
-    // Ensure at least 1 px so Radix has a real box to anchor against.
     return {
       top,
       left,
@@ -575,16 +684,6 @@ function getSelectionRect(editor: Editor): SelectionRect | null {
   }
 }
 
-/**
- * Converts a SelectionRect (or null) to a `position:fixed` CSSProperties object
- * suitable for the hidden PopoverAnchor span. Radix reads the anchor's
- * getBoundingClientRect() — using `fixed` + viewport coords from coordsAtPos /
- * getBoundingClientRect means no page-scroll offset math is needed.
- *
- * Assumption: no CSS-transformed ancestor above `.wysiwyg-root` (a transform
- * would make `position:fixed` relative to that ancestor, not the viewport, which
- * would offset the popover). The current app shell has no such transforms.
- */
 function anchorRectToStyle(rect: SelectionRect | null): CSSProperties {
   if (rect) {
     return {
@@ -597,7 +696,6 @@ function anchorRectToStyle(rect: SelectionRect | null): CSSProperties {
       visibility: 'hidden',
     }
   }
-  // Fallback: 1×1 px at viewport origin — degrades gracefully when rect unavailable.
   return { position: 'fixed', top: 0, left: 0, width: 1, height: 1, pointerEvents: 'none', visibility: 'hidden' }
 }
 
@@ -607,17 +705,9 @@ function anchorRectToStyle(rect: SelectionRect | null): CSSProperties {
 
 interface LinkPopoverState {
   open: boolean
-  /** Initial text — empty for new, pre-filled from selection for wrap */
   initialText: string
-  /** Initial href — empty for new, pre-filled for edit */
   initialHref: string
-  /** True when editing an existing link (shows "Remove link" button) */
   isEditing: boolean
-  /**
-   * Viewport rect of the selection at open-time. Captured once when the
-   * popover opens and applied as `position:fixed` to the PopoverAnchor span
-   * so Radix positions the form next to the link/image, not at the corner.
-   */
   anchorRect: SelectionRect | null
 }
 
@@ -637,7 +727,6 @@ interface LinkFormProps {
   onClose: () => void
 }
 
-/** Inner controlled form — remounted via `key` when popover (re-)opens */
 function LinkForm({
   initialText,
   initialHref,
@@ -651,7 +740,6 @@ function LinkForm({
   const hrefInputRef = useRef<HTMLInputElement>(null)
   const textInputRef = useRef<HTMLInputElement>(null)
 
-  // Focus on mount (no useEffect + setState needed; state is initialised above)
   useEffect(() => {
     setTimeout(() => {
       if (initialText) {
@@ -748,19 +836,10 @@ function LinkForm({
 }
 
 function LinkPopover({ state, onSave, onRemove, onClose }: LinkPopoverProps) {
-  // Key changes whenever the popover opens or its initial values change,
-  // causing LinkForm to remount with fresh useState initializers — no effect needed.
   const formKey = `${state.open}|${state.initialText}|${state.initialHref}`
-
-  // anchorRectToStyle applies anchorRect as a fixed-position invisible span.
-  // Radix measures PopoverAnchor's getBoundingClientRect() to place the content,
-  // so giving the span real viewport coordinates anchors the form to the selection.
 
   return (
     <Popover open={state.open} onOpenChange={(open) => { if (!open) onClose() }}>
-      {/* Fixed-position anchor span placed at the selection's viewport rect.
-          Radix reads this element's getBoundingClientRect() to position the
-          PopoverContent, so the form appears adjacent to the link text. */}
       <PopoverAnchor asChild>
         <span style={anchorRectToStyle(state.anchorRect)} />
       </PopoverAnchor>
@@ -792,10 +871,6 @@ interface ImagePopoverState {
   initialSrc: string
   initialAlt: string
   isEditing: boolean
-  /**
-   * Viewport rect of the selection at open-time. Same fixed-position anchor
-   * strategy as LinkPopover — captured once at open, drives PopoverAnchor.
-   */
   anchorRect: SelectionRect | null
 }
 
@@ -815,7 +890,6 @@ interface ImageFormProps {
   onClose: () => void
 }
 
-/** Inner controlled form — remounted via `key` when popover (re-)opens */
 function ImageForm({
   initialSrc,
   initialAlt,
@@ -837,6 +911,7 @@ function ImageForm({
 
   function handleSave() {
     onSave(src.trim(), alt.trim())
+    // Focus back to editor is handled by the caller (handleImageSave)
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -919,17 +994,10 @@ function ImageForm({
 }
 
 function ImagePopover({ state, onSave, onRemove, onClose }: ImagePopoverProps) {
-  // Key changes whenever the popover opens or its initial values change,
-  // causing ImageForm to remount with fresh useState initializers — no effect needed.
   const formKey = `${state.open}|${state.initialSrc}|${state.initialAlt}`
-
-  // Same fixed-position anchor strategy as LinkPopover — see anchorRectToStyle.
 
   return (
     <Popover open={state.open} onOpenChange={(open) => { if (!open) onClose() }}>
-      {/* Fixed-position anchor span placed at the image's viewport rect.
-          Radix reads this element's getBoundingClientRect() to position the
-          PopoverContent, so the form appears adjacent to the selected image. */}
       <PopoverAnchor asChild>
         <span style={anchorRectToStyle(state.anchorRect)} />
       </PopoverAnchor>
@@ -953,625 +1021,630 @@ function ImagePopover({ state, onSave, onRemove, onClose }: ImagePopoverProps) {
 }
 
 // ---------------------------------------------------------------------------
-// WysiwygEditor
+// WysiwygEditor public API
 // ---------------------------------------------------------------------------
+
+export interface WysiwygEditorHandle {
+  /** Flush any pending debounced onChange immediately (synchronously). */
+  flush(): void
+}
 
 export interface WysiwygEditorProps {
   /** Markdown string — single source of truth */
   value: string
-  /** Called with new markdown on every edit */
+  /** Called with new markdown after edits (debounced by onChangeDebounceMs). */
   onChange?: (md: string) => void
   placeholder?: string
   readOnly?: boolean
   className?: string
   /**
    * When true: no slash menu; pure keyboard surface for inline embedding
-   * (e.g. LLM prompt input). Markdown input rules still apply.
-   * Link/Image/Table bubble menus and popovers are still active in minimal
-   * mode — they are useful even when embedding the editor inline.
+   * (e.g. LLM prompt input). Markdown input rules, Ctrl+K link, and
+   * image/table bubble menus still work in minimal mode.
    */
   minimal?: boolean
+  /**
+   * Debounce delay for onChange in ms. Default 150. Pass 0 for synchronous
+   * emission (same as original behaviour).
+   */
+  onChangeDebounceMs?: number
 }
 
-export default function WysiwygEditor({
-  value,
-  onChange,
-  placeholder = 'Start writing… (type / for commands)',
-  readOnly = false,
-  className,
-  minimal = false,
-}: WysiwygEditorProps) {
-  // ── Dark mode tracking (MutationObserver pattern) ─────────────────────────
-  const [dark, setDark] = useState(() =>
-    document.documentElement.classList.contains('dark'),
-  )
-  useEffect(() => {
-    const el = document.documentElement
-    const obs = new MutationObserver(() => setDark(el.classList.contains('dark')))
-    obs.observe(el, { attributes: true, attributeFilter: ['class'] })
-    return () => obs.disconnect()
-  }, [])
+// ---------------------------------------------------------------------------
+// WysiwygEditor
+// ---------------------------------------------------------------------------
 
-  // ── Slash menu state + refs ────────────────────────────────────────────────
-  const [slashMenu, setSlashMenu] = useState<SlashMenuState | null>(null)
+const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
+  function WysiwygEditor(
+    {
+      value,
+      onChange,
+      placeholder = 'Start writing… (type / for commands)',
+      readOnly = false,
+      className,
+      minimal = false,
+      onChangeDebounceMs = 150,
+    }: WysiwygEditorProps,
+    ref,
+  ) {
+    // ── Dark mode tracking ─────────────────────────────────────────────────
+    const [dark, setDark] = useState(() =>
+      document.documentElement.classList.contains('dark'),
+    )
+    useEffect(() => {
+      const el = document.documentElement
+      const obs = new MutationObserver(() => setDark(el.classList.contains('dark')))
+      obs.observe(el, { attributes: true, attributeFilter: ['class'] })
+      return () => obs.disconnect()
+    }, [])
 
-  // Refs used by the ProseMirror plugin (created once outside render cycle)
-  const setMenuRef = useRef<((s: SlashMenuState | null) => void) | null>(null)
-  const slashHandleRef = useRef<SlashMenuHandle | null>(null)
+    // ── Slash menu state + refs ────────────────────────────────────────────
+    const [slashMenu, setSlashMenu] = useState<SlashMenuState | null>(null)
+    const setMenuRef = useRef<((s: SlashMenuState | null) => void) | null>(null)
+    const slashHandleRef = useRef<SlashMenuHandle | null>(null)
 
-  // Keep setter ref in sync via useLayoutEffect (runs synchronously after DOM
-  // mutations, not during render — avoids the react-hooks/refs lint error)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useLayoutEffect(() => {
-    setMenuRef.current = setSlashMenu
-  })
-
-  // ── Link popover state ─────────────────────────────────────────────────────
-  const [linkPopover, setLinkPopover] = useState<LinkPopoverState>({
-    open: false,
-    initialText: '',
-    initialHref: '',
-    isEditing: false,
-    anchorRect: null,
-  })
-
-  // Ref for openLinkPopover so it can be called from the slash extension
-  const openLinkRef = useRef<(() => void) | null>(null)
-
-  // ── Image popover state ────────────────────────────────────────────────────
-  const [imagePopover, setImagePopover] = useState<ImagePopoverState>({
-    open: false,
-    initialSrc: '',
-    initialAlt: '',
-    isEditing: false,
-    anchorRect: null,
-  })
-
-  // Ref for openImagePopover so it can be called from the slash extension
-  const openImageRef = useRef<(() => void) | null>(null)
-
-  // ── Slash extension (stable — lazy-initialised with useState) ─────────────
-  // useState's lazy initializer runs exactly once (on mount) and never during
-  // a re-render. buildSlashExtension stores the ref objects for later access in
-  // ProseMirror plugin callbacks (not during render) — disable is correct here.
-  // eslint-disable-next-line react-hooks/refs
-  const [slashExtension] = useState(() =>
-    buildSlashExtension(setMenuRef, slashHandleRef, openLinkRef, openImageRef),
-  )
-
-  // ── Extensions ────────────────────────────────────────────────────────────
-  const extensions = useMemo(
-    () => [
-      StarterKit.configure({
-        // In Tiptap v3 the undo/redo extension is 'undoRedo', not 'history'
-        undoRedo: { depth: 200 },
-        codeBlock: { HTMLAttributes: { class: 'wysiwyg-code-block' } },
-        // Disable StarterKit's bundled Link so we can configure it below
-        // with our own HTMLAttributes (class, rel, target) and openOnClick.
-        // StarterKit v3 bundles Link by default; omitting link:false causes
-        // a duplicate-name warning and the configured options being dropped.
-        link: false,
-      }),
-      Table.configure({ resizable: false }),
-      TableRow,
-      TableCell,
-      TableHeader,
-      TaskList.configure({
-        HTMLAttributes: { class: 'wysiwyg-task-list' },
-      }),
-      TaskItem.configure({ nested: true }),
-      Link.configure({
-        // openOnClick opens existing links. In edit mode we disable this so
-        // clicking a link triggers the bubble menu instead. In readOnly mode
-        // links open normally.
-        openOnClick: readOnly,
-        HTMLAttributes: {
-          class: 'wysiwyg-link',
-          rel: 'noopener noreferrer',
-          target: '_blank',
-        },
-      }),
-      Image.configure({
-        HTMLAttributes: { class: 'wysiwyg-image max-w-full rounded' },
-      }),
-      Placeholder.configure({ placeholder }),
-      // tiptap-markdown: handles markdown↔doc serialisation.
-      // transformPastedText allows pasting raw markdown into the WYSIWYG surface.
-      Markdown.configure({
-        html: false,
-        tightLists: true,
-        linkify: false,
-        breaks: false,
-        transformPastedText: true,
-        transformCopiedText: false,
-      }),
-      ...(minimal ? [] : [slashExtension]),
-    ],
-    // Intentionally stable — only rebuild when minimal changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [minimal],
-  )
+    useLayoutEffect(() => {
+      setMenuRef.current = setSlashMenu
+    })
 
-  // ── Prevent external-sync loop ────────────────────────────────────────────
-  const suppressExternalSync = useRef(false)
+    // ── Link popover state ─────────────────────────────────────────────────
+    const [linkPopover, setLinkPopover] = useState<LinkPopoverState>({
+      open: false,
+      initialText: '',
+      initialHref: '',
+      isEditing: false,
+      anchorRect: null,
+    })
 
-  // Helper: get markdown from editor storage (typed via MarkdownStorage)
-  function getMarkdown(e: NonNullable<ReturnType<typeof useEditor>>): string {
-    // editor.storage is Tiptap's Record<string, any>; cast to access tiptap-markdown
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return ((e.storage as Record<string, any>).markdown as MarkdownStorage).getMarkdown()
-  }
+    const openLinkRef = useRef<(() => void) | null>(null)
 
-  // ── Editor instance ───────────────────────────────────────────────────────
-  const editor = useEditor({
-    extensions,
-    content: value,
-    editable: !readOnly,
-    onUpdate({ editor: e }) {
-      suppressExternalSync.current = true
-      const md = getMarkdown(e)
-      onChange?.(md)
-      requestAnimationFrame(() => {
-        suppressExternalSync.current = false
-      })
-    },
-    editorProps: {
-      attributes: {
-        class: cn(
-          'wysiwyg-prose focus:outline-none',
-          'min-h-[120px] w-full px-4 py-3',
-        ),
-      },
-    },
-  })
+    // ── Image popover state ────────────────────────────────────────────────
+    const [imagePopover, setImagePopover] = useState<ImagePopoverState>({
+      open: false,
+      initialSrc: '',
+      initialAlt: '',
+      isEditing: false,
+      anchorRect: null,
+    })
 
-  // ── Populate popover opener refs once editor is available ──────────────────
-  // These are stable functions that read the current editor state; they only
-  // need to be recreated when `editor` reference changes (post-mount).
+    const openImageRef = useRef<(() => void) | null>(null)
 
-  useLayoutEffect(() => {
-    openLinkRef.current = () => {
-      if (!editor) return
-      const { selection } = editor.state
-      const selectedText = editor.state.doc.textBetween(
-        selection.from,
-        selection.to,
-        '',
-      )
-      const linkAttrs = editor.getAttributes('link') as { href?: string }
-      const isEditing = editor.isActive('link')
+    // ── Stable extensions ──────────────────────────────────────────────────
+    // eslint-disable-next-line react-hooks/refs
+    const [slashExtension] = useState(() =>
+      buildSlashExtension(setMenuRef, slashHandleRef, openLinkRef, openImageRef),
+    )
 
-      // When editing an existing link with no selection (caret inside),
-      // pre-fill the text by expanding the range to the full link extent.
-      let prefillText = selectedText
-      if (!prefillText && isEditing) {
-        // Use ProseMirror to resolve the mark range and extract text
-        const { $from } = selection
-        const linkMark = $from.marks().find((m) => m.type.name === 'link')
-        if (linkMark) {
-          let from = selection.from
-          let to = selection.from
-          // Walk backwards to find mark start
-          while (from > 0 && editor.state.doc.rangeHasMark(from - 1, from, linkMark.type)) {
-            from--
-          }
-          // Walk forwards to find mark end
-          while (to < editor.state.doc.content.size && editor.state.doc.rangeHasMark(to, to + 1, linkMark.type)) {
-            to++
-          }
-          prefillText = editor.state.doc.textBetween(from, to, '')
+    // eslint-disable-next-line react-hooks/refs
+    const [linkKeyboardExtension] = useState(() =>
+      buildLinkKeyboardExtension(openLinkRef),
+    )
+
+    const extensions = useMemo(
+      () => [
+        StarterKit.configure({
+          undoRedo: { depth: 200 },
+          codeBlock: { HTMLAttributes: { class: 'wysiwyg-code-block' } },
+          link: false,
+        }),
+        Table.configure({ resizable: false }),
+        TableRow,
+        TableCell,
+        TableHeader,
+        TaskList.configure({
+          HTMLAttributes: { class: 'wysiwyg-task-list' },
+        }),
+        TaskItem.configure({ nested: true }),
+        Link.configure({
+          openOnClick: readOnly,
+          HTMLAttributes: {
+            class: 'wysiwyg-link',
+            rel: 'noopener noreferrer',
+            target: '_blank',
+          },
+        }),
+        Image.configure({
+          HTMLAttributes: { class: 'wysiwyg-image max-w-full rounded' },
+        }),
+        Placeholder.configure({ placeholder }),
+        Markdown.configure({
+          html: false,
+          tightLists: true,
+          linkify: false,
+          breaks: false,
+          transformPastedText: true,
+          transformCopiedText: false,
+        }),
+        linkKeyboardExtension,
+        ...(minimal ? [] : [slashExtension]),
+      ],
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      [minimal],
+    )
+
+    // ── Debounce refs ──────────────────────────────────────────────────────
+    /**
+     * The last markdown string we emitted via onChange. Used to skip the
+     * expensive getMarkdown() call in the sync-effect when the value prop
+     * is just our own edit bouncing back through the parent's state.
+     */
+    const lastEmittedMd = useRef<string>(value)
+    /** Timer id for the pending debounced emit. */
+    const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    /** Stable ref to the latest onChange prop (avoids re-creating the editor). */
+    const onChangeRef = useRef(onChange)
+    useLayoutEffect(() => { onChangeRef.current = onChange })
+    /** Stable ref to the latest onChangeDebounceMs prop. */
+    const debounceMsRef = useRef(onChangeDebounceMs)
+    useLayoutEffect(() => { debounceMsRef.current = onChangeDebounceMs })
+
+    // Helper: get markdown from editor storage
+    function getMarkdown(e: NonNullable<ReturnType<typeof useEditor>>): string {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return ((e.storage as Record<string, any>).markdown as MarkdownStorage).getMarkdown()
+    }
+
+    /**
+     * Flush: run getMarkdown() + call onChange immediately.
+     * Cancels any pending debounce timer first.
+     */
+    const flushRef = useRef<(() => void) | null>(null)
+
+    // ── Editor instance ────────────────────────────────────────────────────
+    const editor = useEditor({
+      extensions,
+      content: value,
+      editable: !readOnly,
+      onUpdate({ editor: e }) {
+        // Cancel any pending debounce and schedule a new one.
+        if (debounceTimerRef.current !== null) {
+          clearTimeout(debounceTimerRef.current)
+          debounceTimerRef.current = null
         }
-      }
 
-      // Capture the selection's viewport rect so the popover can be anchored
-      // to the link text rather than the page corner.
-      const anchorRect = getSelectionRect(editor)
-
-      setLinkPopover({
-        open: true,
-        initialText: prefillText,
-        initialHref: linkAttrs.href ?? '',
-        isEditing,
-        anchorRect,
-      })
-    }
-
-    openImageRef.current = () => {
-      if (!editor) return
-      const imageAttrs = editor.getAttributes('image') as { src?: string; alt?: string }
-      // Capture the image's viewport rect for anchor positioning.
-      const anchorRect = getSelectionRect(editor)
-      setImagePopover({
-        open: true,
-        initialSrc: imageAttrs.src ?? '',
-        initialAlt: imageAttrs.alt ?? '',
-        isEditing: editor.isActive('image'),
-        anchorRect,
-      })
-    }
-  })
-
-  // ── Sync external value → editor (e.g. doc switch) ────────────────────────
-  useEffect(() => {
-    if (!editor || suppressExternalSync.current) return
-    const current = getMarkdown(editor)
-    if (current !== value) {
-      editor.commands.setContent(value, { emitUpdate: false })
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value])
-
-  // ── Update editable state ─────────────────────────────────────────────────
-  useEffect(() => {
-    editor?.setEditable(!readOnly)
-  }, [editor, readOnly])
-
-  // ── Close slash menu ──────────────────────────────────────────────────────
-  const handleClose = useCallback(() => setSlashMenu(null), [])
-
-  // ── Link popover handlers ─────────────────────────────────────────────────
-
-  const handleLinkSave = useCallback(
-    (text: string, href: string) => {
-      if (!editor) return
-      setLinkPopover((s) => ({ ...s, open: false }))
-      // Empty URL = remove link / nothing
-      if (!href) {
-        editor.chain().focus().unsetLink().run()
-        return
-      }
-      if (text) {
-        // Insert or replace selected text as a link
-        const { selection } = editor.state
-        const hasSelection = selection.from !== selection.to
-
-        if (hasSelection) {
-          // Wrap selection in link mark (text replaced by whatever user typed in the field)
-          editor
-            .chain()
-            .focus()
-            .deleteSelection()
-            .insertContent({
-              type: 'text',
-              text,
-              marks: [{ type: 'link', attrs: { href } }],
-            })
-            .run()
-        } else if (editor.isActive('link')) {
-          // Caret is inside existing link — update href (and optionally text)
-          // First expand selection to cover the whole link, then replace
-          editor
-            .chain()
-            .focus()
-            .extendMarkRange('link')
-            .deleteSelection()
-            .insertContent({
-              type: 'text',
-              text,
-              marks: [{ type: 'link', attrs: { href } }],
-            })
-            .run()
+        const delayMs = debounceMsRef.current
+        if (delayMs <= 0) {
+          // Synchronous path (delayMs=0)
+          const md = getMarkdown(e)
+          lastEmittedMd.current = md
+          onChangeRef.current?.(md)
         } else {
-          // No selection, not inside a link — insert new linked text at cursor
-          editor
-            .chain()
-            .focus()
-            .insertContent({
-              type: 'text',
-              text,
-              marks: [{ type: 'link', attrs: { href } }],
-            })
-            .run()
+          debounceTimerRef.current = setTimeout(() => {
+            debounceTimerRef.current = null
+            const md = getMarkdown(e)
+            lastEmittedMd.current = md
+            onChangeRef.current?.(md)
+          }, delayMs)
         }
-      } else {
-        // No text — just apply link mark to existing selection / position
-        editor.chain().focus().extendMarkRange('link').setLink({ href }).run()
+      },
+      editorProps: {
+        attributes: {
+          class: cn(
+            'wysiwyg-prose focus:outline-none',
+            'min-h-[120px] w-full px-4 py-3',
+          ),
+        },
+      },
+    })
+
+    // ── Populate flush ref once editor is available ────────────────────────
+    useLayoutEffect(() => {
+      flushRef.current = () => {
+        if (!editor || editor.isDestroyed) return
+        if (debounceTimerRef.current !== null) {
+          clearTimeout(debounceTimerRef.current)
+          debounceTimerRef.current = null
+        }
+        const md = getMarkdown(editor)
+        lastEmittedMd.current = md
+        onChangeRef.current?.(md)
       }
-    },
-    [editor],
-  )
+    })
 
-  const handleLinkRemove = useCallback(() => {
-    setLinkPopover((s) => ({ ...s, open: false }))
-    editor?.chain().focus().extendMarkRange('link').unsetLink().run()
-  }, [editor])
+    // ── Expose flush via forwardRef ────────────────────────────────────────
+    useImperativeHandle(ref, () => ({
+      flush() {
+        flushRef.current?.()
+      },
+    }), [])
 
-  const handleLinkClose = useCallback(() => {
-    setLinkPopover((s) => ({ ...s, open: false }))
-  }, [])
-
-  // ── Image popover handlers ────────────────────────────────────────────────
-
-  const handleImageSave = useCallback(
-    (src: string, alt: string) => {
+    // ── Flush on blur ──────────────────────────────────────────────────────
+    useEffect(() => {
       if (!editor) return
-      setImagePopover((s) => ({ ...s, open: false }))
-      if (!src) return
-      if (editor.isActive('image')) {
-        // Update existing image node
-        editor.chain().focus().updateAttributes('image', { src, alt }).run()
-      } else {
-        editor.chain().focus().setImage({ src, alt }).run()
+      const handleBlur = () => flushRef.current?.()
+      editor.on('blur', handleBlur)
+      return () => { editor.off('blur', handleBlur) }
+    }, [editor])
+
+    // ── Flush on unmount ───────────────────────────────────────────────────
+    useEffect(() => {
+      return () => {
+        // Run flush on unmount using current refs
+        if (debounceTimerRef.current !== null) {
+          clearTimeout(debounceTimerRef.current)
+          debounceTimerRef.current = null
+        }
+        // We can't call getMarkdown here because editor may already be
+        // destroyed in the same cleanup cycle; the parent should call
+        // flush() before unmounting for reliable results.
       }
-    },
-    [editor],
-  )
+    }, [])
 
-  const handleImageRemove = useCallback(() => {
-    setImagePopover((s) => ({ ...s, open: false }))
-    if (!editor) return
-    // Delete the selected image node
-    editor.chain().focus().deleteSelection().run()
-  }, [editor])
+    // ── Flush when readOnly flips ──────────────────────────────────────────
+    const prevReadOnly = useRef(readOnly)
+    useEffect(() => {
+      if (prevReadOnly.current !== readOnly) {
+        prevReadOnly.current = readOnly
+        flushRef.current?.()
+      }
+      editor?.setEditable(!readOnly)
+    }, [editor, readOnly])
 
-  const handleImageClose = useCallback(() => {
-    setImagePopover((s) => ({ ...s, open: false }))
-  }, [])
+    // ── Populate popover opener refs ───────────────────────────────────────
+    useLayoutEffect(() => {
+      openLinkRef.current = () => {
+        if (!editor) return
+        const { selection } = editor.state
+        const selectedText = editor.state.doc.textBetween(
+          selection.from,
+          selection.to,
+          '',
+        )
+        const linkAttrs = editor.getAttributes('link') as { href?: string }
+        const isEditing = editor.isActive('link')
 
-  // ── Render ────────────────────────────────────────────────────────────────
-  return (
-    <div className={cn('wysiwyg-root relative', dark && 'dark', className)}>
-      <EditorContent editor={editor} />
-
-      {/* ── Link bubble toolbar ────────────────────────────────────────────
-          Shows when the caret is inside a link mark.
-          shouldShow: link is active AND image is NOT selected (avoid collision).
-          Implementation: BubbleMenu from @tiptap/react/menus — it uses
-          @floating-ui/dom (already a transitive dep) for positioning.
-      */}
-      {editor && !readOnly && (
-        <BubbleMenu
-          editor={editor}
-          pluginKey="linkBubble"
-          options={{ placement: 'bottom' }}
-          shouldShow={({ editor: e }) =>
-            e.isActive('link') && !e.isActive('image')
+        let prefillText = selectedText
+        if (!prefillText && isEditing) {
+          const { $from } = selection
+          const linkMark = $from.marks().find((m) => m.type.name === 'link')
+          if (linkMark) {
+            let from = selection.from
+            let to = selection.from
+            while (from > 0 && editor.state.doc.rangeHasMark(from - 1, from, linkMark.type)) {
+              from--
+            }
+            while (to < editor.state.doc.content.size && editor.state.doc.rangeHasMark(to, to + 1, linkMark.type)) {
+              to++
+            }
+            prefillText = editor.state.doc.textBetween(from, to, '')
           }
-        >
-          <div className="wysiwyg-bubble-toolbar">
-            {/* Truncated URL display */}
-            {(() => {
-              const href = (editor.getAttributes('link') as { href?: string }).href ?? ''
-              const display =
-                href.length > 40 ? href.slice(0, 38) + '…' : href
-              return (
-                <span
-                  className="text-[11px] text-muted-foreground max-w-[140px] truncate shrink"
-                  title={href}
-                >
-                  {display}
+        }
+
+        const anchorRect = getSelectionRect(editor)
+        setLinkPopover({
+          open: true,
+          initialText: prefillText,
+          initialHref: linkAttrs.href ?? '',
+          isEditing,
+          anchorRect,
+        })
+      }
+
+      openImageRef.current = () => {
+        if (!editor) return
+        const imageAttrs = editor.getAttributes('image') as { src?: string; alt?: string }
+        const anchorRect = getSelectionRect(editor)
+        setImagePopover({
+          open: true,
+          initialSrc: imageAttrs.src ?? '',
+          initialAlt: imageAttrs.alt ?? '',
+          isEditing: editor.isActive('image'),
+          anchorRect,
+        })
+      }
+    })
+
+    // ── Sync external value → editor (e.g. doc switch) ────────────────────
+    useEffect(() => {
+      if (!editor) return
+      // If value equals what we last emitted, this is our own round-trip — skip.
+      if (value === lastEmittedMd.current) return
+      // Cancel any pending debounce before forcing a setContent.
+      if (debounceTimerRef.current !== null) {
+        clearTimeout(debounceTimerRef.current)
+        debounceTimerRef.current = null
+      }
+      // External change (doc switch, edit in Markdown mode) — apply it.
+      editor.commands.setContent(value, { emitUpdate: false })
+      lastEmittedMd.current = value
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [value])
+
+    // ── Close slash menu ───────────────────────────────────────────────────
+    const handleClose = useCallback(() => setSlashMenu(null), [])
+
+    // ── Link popover handlers ──────────────────────────────────────────────
+
+    const handleLinkSave = useCallback(
+      (text: string, href: string) => {
+        if (!editor) return
+        setLinkPopover((s) => ({ ...s, open: false }))
+        if (!href) {
+          editor.chain().focus().extendMarkRange('link').unsetLink().run()
+          return
+        }
+        if (text) {
+          const { selection } = editor.state
+          const hasSelection = selection.from !== selection.to
+
+          if (hasSelection) {
+            editor
+              .chain()
+              .focus()
+              .deleteSelection()
+              .insertContent({
+                type: 'text',
+                text,
+                marks: [{ type: 'link', attrs: { href } }],
+              })
+              .run()
+          } else if (editor.isActive('link')) {
+            editor
+              .chain()
+              .focus()
+              .extendMarkRange('link')
+              .deleteSelection()
+              .insertContent({
+                type: 'text',
+                text,
+                marks: [{ type: 'link', attrs: { href } }],
+              })
+              .run()
+          } else {
+            editor
+              .chain()
+              .focus()
+              .insertContent({
+                type: 'text',
+                text,
+                marks: [{ type: 'link', attrs: { href } }],
+              })
+              .run()
+          }
+        } else {
+          editor.chain().focus().extendMarkRange('link').setLink({ href }).run()
+        }
+        // Return focus to editor after save
+        editor.commands.focus()
+      },
+      [editor],
+    )
+
+    const handleLinkRemove = useCallback(() => {
+      setLinkPopover((s) => ({ ...s, open: false }))
+      editor?.chain().focus().extendMarkRange('link').unsetLink().run()
+    }, [editor])
+
+    const handleLinkClose = useCallback(() => {
+      setLinkPopover((s) => ({ ...s, open: false }))
+      editor?.commands.focus()
+    }, [editor])
+
+    // ── Image popover handlers ─────────────────────────────────────────────
+
+    const handleImageSave = useCallback(
+      (src: string, alt: string) => {
+        if (!editor) return
+        setImagePopover((s) => ({ ...s, open: false }))
+        if (!src) {
+          editor.commands.focus()
+          return
+        }
+        if (editor.isActive('image')) {
+          editor.chain().focus().updateAttributes('image', { src, alt }).run()
+        } else {
+          editor.chain().focus().setImage({ src, alt }).run()
+        }
+        // Return focus to editor after save
+        editor.commands.focus()
+      },
+      [editor],
+    )
+
+    const handleImageRemove = useCallback(() => {
+      setImagePopover((s) => ({ ...s, open: false }))
+      if (!editor) return
+      editor.chain().focus().deleteSelection().run()
+    }, [editor])
+
+    const handleImageClose = useCallback(() => {
+      setImagePopover((s) => ({ ...s, open: false }))
+      editor?.commands.focus()
+    }, [editor])
+
+    // ── Render ─────────────────────────────────────────────────────────────
+    return (
+      <div className={cn('wysiwyg-root relative', dark && 'dark', className)}>
+        <EditorContent editor={editor} />
+
+        {/* ── Image bubble toolbar ───────────────────────────────────────────
+            Shows when an image node is selected.
+            Link bubble removed — links are keyboard-first (Ctrl+K).
+        */}
+        {editor && !readOnly && (
+          <BubbleMenu
+            editor={editor}
+            pluginKey="imageBubble"
+            options={{ placement: 'bottom' }}
+            shouldShow={({ editor: e }) => e.isActive('image')}
+          >
+            <div className="wysiwyg-bubble-toolbar">
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-6 w-6 shrink-0"
+                title="Edit image"
+                aria-label="Edit image"
+                onClick={() => {
+                  openImageRef.current?.()
+                }}
+              >
+                <PencilIcon className="h-3 w-3" />
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-6 w-6 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                title="Remove image"
+                aria-label="Remove image"
+                onClick={() => {
+                  editor.chain().focus().deleteSelection().run()
+                }}
+              >
+                <Trash2Icon className="h-3 w-3" />
+              </Button>
+            </div>
+          </BubbleMenu>
+        )}
+
+        {/* ── Table bubble toolbar ──────────────────────────────────────────
+            Shows when the caret is inside a table node and no image is selected.
+        */}
+        {editor && !readOnly && (
+          <BubbleMenu
+            editor={editor}
+            pluginKey="tableBubble"
+            options={{ placement: 'top' }}
+            shouldShow={({ editor: e }) =>
+              e.isActive('table') && !e.isActive('image')
+            }
+          >
+            <div className="wysiwyg-bubble-toolbar flex-wrap gap-y-1">
+              {/* Row operations */}
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-6 w-6 shrink-0"
+                title="Add row above (Ctrl+Shift+Enter)"
+                aria-label="Add row above"
+                onClick={() => editor.chain().focus().addRowBefore().run()}
+              >
+                <span className="flex flex-col items-center gap-0 leading-none">
+                  <PlusIcon className="h-2 w-2" />
+                  <RowsIcon className="h-2.5 w-2.5" />
                 </span>
-              )
-            })()}
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-6 w-6 shrink-0"
-              title="Open link in new tab"
-              aria-label="Open link in new tab"
-              onClick={() => {
-                const href = (editor.getAttributes('link') as { href?: string }).href
-                if (href) window.open(href, '_blank', 'noopener,noreferrer')
-              }}
-            >
-              <ExternalLinkIcon className="h-3 w-3" />
-            </Button>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-6 w-6 shrink-0"
-              title="Edit link"
-              aria-label="Edit link"
-              onClick={() => {
-                openLinkRef.current?.()
-              }}
-            >
-              <PencilIcon className="h-3 w-3" />
-            </Button>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-6 w-6 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
-              title="Remove link"
-              aria-label="Remove link"
-              onClick={() => {
-                editor.chain().focus().extendMarkRange('link').unsetLink().run()
-              }}
-            >
-              <UnlinkIcon className="h-3 w-3" />
-            </Button>
-          </div>
-        </BubbleMenu>
-      )}
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-6 w-6 shrink-0"
+                title="Add row below (Ctrl+Enter)"
+                aria-label="Add row below"
+                onClick={() => editor.chain().focus().addRowAfter().run()}
+              >
+                <span className="flex flex-col items-center gap-0 leading-none">
+                  <RowsIcon className="h-2.5 w-2.5" />
+                  <PlusIcon className="h-2 w-2" />
+                </span>
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-6 w-6 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                title="Delete row (Ctrl+Alt+Backspace)"
+                aria-label="Delete row"
+                onClick={() => editor.chain().focus().deleteRow().run()}
+              >
+                <span className="flex flex-col items-center gap-0 leading-none">
+                  <RowsIcon className="h-2.5 w-2.5" />
+                  <MinusIcon className="h-2 w-2" />
+                </span>
+              </Button>
 
-      {/* ── Image bubble toolbar ───────────────────────────────────────────
-          Shows when an image node is selected.
-          The link bubble already excludes images (shouldShow: !e.isActive('image')),
-          so no additional gate is needed here.
-      */}
-      {editor && !readOnly && (
-        <BubbleMenu
-          editor={editor}
-          pluginKey="imageBubble"
-          options={{ placement: 'bottom' }}
-          shouldShow={({ editor: e }) => e.isActive('image')}
-        >
-          <div className="wysiwyg-bubble-toolbar">
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-6 w-6 shrink-0"
-              title="Edit image"
-              aria-label="Edit image"
-              onClick={() => {
-                openImageRef.current?.()
-              }}
-            >
-              <PencilIcon className="h-3 w-3" />
-            </Button>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-6 w-6 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
-              title="Remove image"
-              aria-label="Remove image"
-              onClick={() => {
-                editor.chain().focus().deleteSelection().run()
-              }}
-            >
-              <Trash2Icon className="h-3 w-3" />
-            </Button>
-          </div>
-        </BubbleMenu>
-      )}
+              <div className="wysiwyg-bubble-sep" />
 
-      {/* ── Table bubble toolbar ──────────────────────────────────────────
-          Shows when the caret is inside a table node.
-          shouldShow: table is active AND link/image are NOT active
-          (so table controls don't overlap link/image toolbars).
-      */}
-      {editor && !readOnly && (
-        <BubbleMenu
-          editor={editor}
-          pluginKey="tableBubble"
-          options={{ placement: 'top' }}
-          shouldShow={({ editor: e }) =>
-            e.isActive('table') && !e.isActive('link') && !e.isActive('image')
-          }
-        >
-          <div className="wysiwyg-bubble-toolbar flex-wrap gap-y-1">
-            {/* Row operations */}
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-6 w-6 shrink-0"
-              title="Add row above"
-              aria-label="Add row above"
-              onClick={() => editor.chain().focus().addRowBefore().run()}
-            >
-              {/* Row + up: use a stacked icon approach */}
-              <span className="flex flex-col items-center gap-0 leading-none">
-                <PlusIcon className="h-2 w-2" />
-                <RowsIcon className="h-2.5 w-2.5" />
-              </span>
-            </Button>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-6 w-6 shrink-0"
-              title="Add row below"
-              aria-label="Add row below"
-              onClick={() => editor.chain().focus().addRowAfter().run()}
-            >
-              <span className="flex flex-col items-center gap-0 leading-none">
-                <RowsIcon className="h-2.5 w-2.5" />
-                <PlusIcon className="h-2 w-2" />
-              </span>
-            </Button>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-6 w-6 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
-              title="Delete row"
-              aria-label="Delete row"
-              onClick={() => editor.chain().focus().deleteRow().run()}
-            >
-              <span className="flex flex-col items-center gap-0 leading-none">
-                <RowsIcon className="h-2.5 w-2.5" />
-                <MinusIcon className="h-2 w-2" />
-              </span>
-            </Button>
+              {/* Column operations */}
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-6 w-6 shrink-0"
+                title="Add column before (Ctrl+Alt+←)"
+                aria-label="Add column before"
+                onClick={() => editor.chain().focus().addColumnBefore().run()}
+              >
+                <span className="flex flex-row items-center gap-0 leading-none">
+                  <PlusIcon className="h-2 w-2" />
+                  <Columns3Icon className="h-2.5 w-2.5" />
+                </span>
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-6 w-6 shrink-0"
+                title="Add column after (Ctrl+Alt+→)"
+                aria-label="Add column after"
+                onClick={() => editor.chain().focus().addColumnAfter().run()}
+              >
+                <span className="flex flex-row items-center gap-0 leading-none">
+                  <Columns3Icon className="h-2.5 w-2.5" />
+                  <PlusIcon className="h-2 w-2" />
+                </span>
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-6 w-6 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                title="Delete column"
+                aria-label="Delete column"
+                onClick={() => editor.chain().focus().deleteColumn().run()}
+              >
+                <span className="flex flex-row items-center gap-0 leading-none">
+                  <Columns3Icon className="h-2.5 w-2.5" />
+                  <MinusIcon className="h-2 w-2" />
+                </span>
+              </Button>
 
-            <div className="wysiwyg-bubble-sep" />
+              <div className="wysiwyg-bubble-sep" />
 
-            {/* Column operations */}
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-6 w-6 shrink-0"
-              title="Add column before"
-              aria-label="Add column before"
-              onClick={() => editor.chain().focus().addColumnBefore().run()}
-            >
-              <span className="flex flex-row items-center gap-0 leading-none">
-                <PlusIcon className="h-2 w-2" />
-                <Columns3Icon className="h-2.5 w-2.5" />
-              </span>
-            </Button>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-6 w-6 shrink-0"
-              title="Add column after"
-              aria-label="Add column after"
-              onClick={() => editor.chain().focus().addColumnAfter().run()}
-            >
-              <span className="flex flex-row items-center gap-0 leading-none">
-                <Columns3Icon className="h-2.5 w-2.5" />
-                <PlusIcon className="h-2 w-2" />
-              </span>
-            </Button>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-6 w-6 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
-              title="Delete column"
-              aria-label="Delete column"
-              onClick={() => editor.chain().focus().deleteColumn().run()}
-            >
-              <span className="flex flex-row items-center gap-0 leading-none">
-                <Columns3Icon className="h-2.5 w-2.5" />
-                <MinusIcon className="h-2 w-2" />
-              </span>
-            </Button>
+              {/* Delete whole table */}
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-6 w-6 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                title="Delete table"
+                aria-label="Delete table"
+                onClick={() => editor.chain().focus().deleteTable().run()}
+              >
+                <span className="flex flex-row items-center gap-0 leading-none">
+                  <TableIcon className="h-2.5 w-2.5" />
+                  <MinusIcon className="h-2 w-2" />
+                </span>
+              </Button>
+            </div>
+          </BubbleMenu>
+        )}
 
-            <div className="wysiwyg-bubble-sep" />
+        {/* ── Slash menu portal ─────────────────────────────────────────────── */}
+        {!minimal && slashMenu && (
+          <SlashMenuPortal
+            items={slashMenu.items}
+            clientRect={slashMenu.clientRect}
+            command={slashMenu.command}
+            itemsVersion={slashMenu.itemsVersion}
+            handleRef={slashHandleRef}
+            onClose={handleClose}
+          />
+        )}
 
-            {/* Delete whole table */}
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-6 w-6 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
-              title="Delete table"
-              aria-label="Delete table"
-              onClick={() => editor.chain().focus().deleteTable().run()}
-            >
-              <span className="flex flex-row items-center gap-0 leading-none">
-                <TableIcon className="h-2.5 w-2.5" />
-                <MinusIcon className="h-2 w-2" />
-              </span>
-            </Button>
-          </div>
-        </BubbleMenu>
-      )}
-
-      {/* ── Slash menu portal ─────────────────────────────────────────────── */}
-      {!minimal && slashMenu && (
-        <SlashMenuPortal
-          items={slashMenu.items}
-          clientRect={slashMenu.clientRect}
-          command={slashMenu.command}
-          itemsVersion={slashMenu.itemsVersion}
-          handleRef={slashHandleRef}
-          onClose={handleClose}
+        {/* ── Link popover form ─────────────────────────────────────────────── */}
+        <LinkPopover
+          state={linkPopover}
+          onSave={handleLinkSave}
+          onRemove={handleLinkRemove}
+          onClose={handleLinkClose}
         />
-      )}
 
-      {/* ── Link popover form ─────────────────────────────────────────────── */}
-      <LinkPopover
-        state={linkPopover}
-        onSave={handleLinkSave}
-        onRemove={handleLinkRemove}
-        onClose={handleLinkClose}
-      />
+        {/* ── Image popover form ────────────────────────────────────────────── */}
+        <ImagePopover
+          state={imagePopover}
+          onSave={handleImageSave}
+          onRemove={handleImageRemove}
+          onClose={handleImageClose}
+        />
+      </div>
+    )
+  },
+)
 
-      {/* ── Image popover form ────────────────────────────────────────────── */}
-      <ImagePopover
-        state={imagePopover}
-        onSave={handleImageSave}
-        onRemove={handleImageRemove}
-        onClose={handleImageClose}
-      />
-    </div>
-  )
-}
+export default WysiwygEditor

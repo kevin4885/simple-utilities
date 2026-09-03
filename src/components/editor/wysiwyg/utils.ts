@@ -6,8 +6,7 @@
  * from here for backwards compatibility.
  */
 
-import type { Editor } from '@tiptap/core'
-import type { CSSProperties } from 'react'
+import type { EditorState } from '@tiptap/pm/state'
 
 // ---------------------------------------------------------------------------
 // normalizeUrl — re-exported here from the canonical location
@@ -16,65 +15,24 @@ import type { CSSProperties } from 'react'
 export { normalizeUrl } from '../wysiwyg-utils'
 
 // ---------------------------------------------------------------------------
-// Selection-rect helpers — used to anchor popovers to the current selection
+// getLinkRange — find the full extent of the link mark at the cursor
 // ---------------------------------------------------------------------------
 
-export interface SelectionRect {
-  top: number
-  left: number
-  width: number
-  height: number
-}
-
-export function getSelectionRect(editor: Editor): SelectionRect | null {
-  const { state, view } = editor
+/**
+ * Returns the from/to extent of the link mark under the current cursor,
+ * or null if the cursor is not inside a link mark.
+ *
+ * Used by openLinkWidget (to set range decoration bounds) and by WidgetPopover
+ * (to prefill the link text field when editing an existing link).
+ */
+export function getLinkRange(state: EditorState): { from: number; to: number } | null {
   const { selection } = state
-
-  try {
-    if (editor.isActive('image')) {
-      const nodeDom = view.nodeDOM(selection.from)
-      if (nodeDom instanceof Element) {
-        const r = nodeDom.getBoundingClientRect()
-        return { top: r.top, left: r.left, width: r.width, height: r.height }
-      }
-    }
-
-    const fromCoords = view.coordsAtPos(selection.from)
-    const toCoords   = view.coordsAtPos(Math.max(selection.from, selection.to))
-    const top    = Math.min(fromCoords.top,    toCoords.top)
-    const left   = Math.min(fromCoords.left,   toCoords.left)
-    const bottom = Math.max(fromCoords.bottom, toCoords.bottom)
-    const right  = Math.max(fromCoords.right,  toCoords.right)
-    return {
-      top,
-      left,
-      width:  Math.max(right - left, 1),
-      height: Math.max(bottom - top, 1),
-    }
-  } catch {
-    return null
-  }
-}
-
-export function anchorRectToStyle(rect: SelectionRect | null): CSSProperties {
-  if (rect) {
-    return {
-      position: 'fixed',
-      top: rect.top,
-      left: rect.left,
-      width: rect.width,
-      height: rect.height,
-      pointerEvents: 'none',
-      visibility: 'hidden',
-    }
-  }
-  return {
-    position: 'fixed',
-    top: 0,
-    left: 0,
-    width: 1,
-    height: 1,
-    pointerEvents: 'none',
-    visibility: 'hidden',
-  }
+  const { $from } = selection
+  const linkMark = $from.marks().find((m) => m.type.name === 'link')
+  if (!linkMark) return null
+  let from = selection.from
+  let to = selection.from
+  while (from > 0 && state.doc.rangeHasMark(from - 1, from, linkMark.type)) from--
+  while (to < state.doc.content.size && state.doc.rangeHasMark(to, to + 1, linkMark.type)) to++
+  return { from, to }
 }

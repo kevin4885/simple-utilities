@@ -20,12 +20,19 @@ These are hand-rolled app components — **not** shadcn/ui (which lives in `src/
 | Path | Purpose |
 |---|---|
 | `WysiwygEditor.tsx` | **Main component** — assembles all submodules; exports `WysiwygEditorHandle` / `WysiwygEditorProps` |
-| `utils.ts` | `getSelectionRect`, `anchorRectToStyle`, re-exports `normalizeUrl` |
+| `utils.ts` | `getLinkRange(state)` — returns `{from,to}` of the link mark under cursor, or null. Re-exports `normalizeUrl`. |
 | `utils.test.ts` | Tests for `wysiwyg/utils.ts` |
 | `extensions/linkKeyboard.ts` | `MARKDOWN_LINK_REGEX` + `buildLinkKeyboardExtension` (Mod-k, Mod-Shift-k, table shortcuts, input rule) |
 | `extensions/slashCommand.tsx` | `buildSlashExtension` + `SlashMenuPortal` / `SlashMenuInner` (derives items from `SLASH_ITEMS`) |
-| `forms/LinkForm.tsx` | `LinkForm` / `LinkPopover` — modal-free inline link editor |
-| `forms/ImageForm.tsx` | `ImageForm` / `ImagePopover` — modal-free inline image editor |
+| `extensions/widgetForm.ts` | `widgetFormExtension` — ProseMirror plugin; in-document widget chip decorations; see below |
+| `forms/LinkForm.tsx` | `LinkForm` — pure form component for inserting/editing links (no popover wrapper) |
+| `forms/ImageForm.tsx` | `ImageForm` — pure form component for inserting/editing images + drag-and-drop file picker |
+| `forms/TableForm.tsx` | `TableForm` — 8×8 grid picker for table insertion (Phase 2) |
+| `forms/WidgetPopover.tsx` | `WidgetPopover` — React popover anchored to in-document chip via Radix `virtualRef` |
+| `forms/imageFile.ts` | Pure helpers: `fileToDataUri`, `isImageFile`, `formatBytes`, `SIZE_WARNING_BYTES` |
+| `forms/imageFile.test.ts` | Unit tests for `imageFile.ts` |
+| `forms/tableGrid.ts` | Pure `nextSize(size, key)` reducer for table grid keyboard navigation |
+| `forms/tableGrid.test.ts` | Unit tests for `tableGrid.ts` |
 | `menus/ImageBubble.tsx` | `ImageBubble` — BubbleMenu shown when image node is selected |
 | `menus/TableBubble.tsx` | `TableBubble` — BubbleMenu for table operations (shows only on empty/CellSelection) |
 | `menus/SelectionBubble.tsx` | `SelectionBubble` — floating toolbar for non-empty text selections (Phase 1 new) |
@@ -107,7 +114,7 @@ full VME tool page. Includes `TooltipProvider` internally for toolbar tooltips.
 ### Dependencies
 
 - **shadcn/ui**: `popover`, `input`, `button`, `label`, `toggle`, `separator`,
-  `dropdown-menu`, `tooltip` — all must be present in `src/components/ui/`.
+  `dropdown-menu`, `tooltip`, `checkbox` — all must be present in `src/components/ui/`.
 - **@tiptap/react/menus**: `BubbleMenu` component (ships with @tiptap/react v3).
 - **@tiptap/pm/state**: `TextSelection` — used by SelectionBubble/TableBubble.
 
@@ -184,12 +191,12 @@ type ToolbarConfig = ToolbarGroup[]
 interface ToolbarActions {
   openLink?: () => void
   openImage?: () => void
+  openTable?: () => void   // Phase 2: opens table grid picker widget
 }
 ```
 
-`exec` receives `(editor, actions?)`. Link/image items call `actions?.openLink?.()` /
-`actions?.openImage?.()` — this keeps popover openers injectable, not hardcoded. Later
-phases will swap these for widgetForm anchors without changing config items.
+`exec` receives `(editor, actions?)`. Link/image/table items call the corresponding
+action callback — this keeps popover openers injectable, not hardcoded.
 
 `formatHotkey(pattern: string)` returns Cmd on Mac, Ctrl elsewhere.
 
@@ -197,7 +204,7 @@ phases will swap these for widgetForm anchors without changing config items.
 
 1. Add a new `ToolbarItem` object to the appropriate group in `TOOLBAR_CONFIG`.
 2. Set a unique `id`, `title`, `icon` (lucide-react), `exec`.
-3. If it needs link/image popovers, use `actions?.openLink?.()` in exec.
+3. If it needs link/image/table widgets, use `actions?.openLink?.()` / `actions?.openImage?.()` / `actions?.openTable?.()` in exec.
 4. The item is automatically included in `SLASH_ITEMS` (unless its `id` is `'undo'` or `'redo'`).
 5. If it's a group dropdown, add a `ToolbarListButton` with `type: 'list'`.
 
@@ -208,7 +215,7 @@ phases will swap these for widgetForm anchors without changing config items.
 | History | undo, redo |
 | Inline marks | bold, italic, strikethrough, inlineCode |
 | Block structure | heading▾ (paragraph, H1–H6), list▾ (bullet, ordered, task, indent, outdent), link, blockquote, code▾ (inline, block) |
-| Insert | image, table, horizontalRule |
+| Insert | image, table (grid picker), horizontalRule |
 
 ### Toolbar rendering — `wysiwyg/toolbar/Toolbar.tsx`
 
@@ -243,15 +250,130 @@ Heading/paragraph dropdown, bold/italic/strike/inline-code toggles, link button.
 
 ---
 
+## Widget Form system (Phase 2)
+
+### Design rationale
+
+The Phase 1 `LinkPopover`/`ImagePopover` used `getSelectionRect()` + `position:fixed` spans
+as anchors. Problem: the rect is a one-time snapshot. If the editor scrolls after the popover
+opens, the popover detaches from the caret.
+
+Phase 2 replaces this with a gravity-ui inspired approach: a ProseMirror `Decoration.widget()`
+is inserted at the caret position, rendering a visible chip (`<span class="wysiwyg-widget-anchor">`).
+A Radix `PopoverAnchor` with `virtualRef` pointing at this chip element lets floating-ui track
+its position automatically on scroll/resize.
+
+### widgetFormExtension (`extensions/widgetForm.ts`)
+
+A TipTap `Extension` wrapping a ProseMirror Plugin that holds a `DecorationSet`.
+
+**Plugin state**: `{ decorations: DecorationSet, active: { id, kind, mode, dom, selectionFrom, selectionTo, rangeFrom, rangeTo, nodePos? } | null }`
+
+Decorations are mapped through `tr.mapping` on every transaction, so if the user types
+before saving, the chip moves with the document. If the block containing the chip is deleted,
+`active` is cleared automatically (chip and range modes only — node mode carries no decoration).
+
+**Anchor modes** — chosen when opening a form:
+
+| Mode | Decoration | When used | dom resolution |
+|------|-----------|-----------|----------------|
+| `chip` | `Decoration.widget()` at `selection.from` | Link/image/table when selection is empty AND not inside an existing link/image | Immediately (chip element built at open time) |
+| `range` | `Decoration.inline(from, to, { class: 'wysiwyg-link-target' })` | Link when selection is non-empty OR cursor is inside an existing link mark | Lazy — `view.dom.querySelector('.wysiwyg-link-target')` in plugin view's `update()` |
+| `node` | None | Image when `editor.isActive('image')` (editing an existing image) | Lazy — `view.nodeDOM(nodePos)` in plugin view's `update()` |
+
+In range and node modes, the plugin view's `update()` resolves `dom` lazily after ProseMirror
+renders. Storage subscribers are only notified once `dom` is non-null.
+
+`openLinkWidget` falls back to `chip` if the computed range is zero-width (mark/state desync guard).
+
+**Meta actions** (dispatched via `tr.setMeta(widgetFormKey, action)`):
+- `{ type: 'open', kind, id, mode, dom?, rangeFrom?, rangeTo?, nodePos? }` — opens widget with chosen mode
+- `{ type: 'close', id }` — removes decoration and clears active
+
+**Storage** (`editor.storage.widgetForm`):
+```ts
+interface WidgetFormStorage {
+  active: ActiveWidget | null
+  subscribe(cb: (active: ActiveWidget | null) => void): void
+  unsubscribe(cb: ...): void
+}
+interface ActiveWidget {
+  id: string
+  kind: 'link' | 'image' | 'table'
+  mode: 'chip' | 'range' | 'node'
+  dom: HTMLElement | null  // null until lazily resolved (range/node modes)
+  selectionFrom: number    // snapshot of selection.from at open time
+  selectionTo: number      // snapshot of selection.to at open time
+  rangeFrom: number        // decoration range from (= selectionFrom for chip)
+  rangeTo: number          // decoration range to (= selectionTo for chip)
+  nodePos?: number         // node mode: document position of the image node
+  getPos(): number | null  // chip mode only — current chip pos from DecorationSet
+}
+```
+
+**TipTap commands**:
+- `editor.commands.openWidgetForm(kind, opts?)` — opens widget; opts: `{ mode?, rangeFrom?, rangeTo?, nodePos? }`
+- `editor.commands.closeWidgetForm()` — dispatches `close` meta, refocuses editor
+
+**Escape handling**: plugin `handleKeyDown` closes active widget on Escape.
+
+**opener helpers** in `WidgetPopover.tsx`:
+- `openLinkWidget(editor)` — `range` when `!selection.empty || isActive('link')` (fallback to `chip` if range is zero-width), else `chip`
+- `openImageWidget(editor)` — `node` when `isActive('image')`, else `chip`
+- `openTableWidget(editor)` — always `chip`
+
+**Close restores selection**: `handleClose` restores the original `TextSelection` (or `NodeSelection` for node mode) before focusing so Cancel doesn't lose the user's caret/selection.
+
+### WidgetPopover (`forms/WidgetPopover.tsx`)
+
+React component. Subscribes to `editor.storage.widgetForm` via `subscribe/unsubscribe`.
+When `active !== null`, renders a Radix `Popover` with:
+- `PopoverAnchor virtualRef={{ current: active.dom }}` → Radix + floating-ui track the chip
+- `PopoverContent` routed to `LinkForm` / `ImageForm` / `TableForm` by `active.kind`
+
+The `virtualRef` is kept in a `useRef<Measurable>` updated via `useLayoutEffect` (not during render).
+
+### Forms
+
+**LinkForm** — text + URL fields. Save semantics:
+- Range mode (`rangeFrom !== rangeTo`, decoration spans highlighted text) → replaces `rangeFrom..rangeTo` with linked text
+- Non-empty selection (chip mode) → replaces selection with linked text
+- Caret in existing link (`editor.isActive('link')`, chip mode) → `extendMarkRange` then replace
+- Empty cursor (chip mode) → insert new text with link mark at cursor
+- Empty href on active link → unlink (`extendMarkRange` + `unsetLink`)
+
+**ImageForm** — URL + Title (optional) + Alt text fields + drag-and-drop/file picker.
+- Files are read as base64 data: URIs via `FileReader` (no backend).
+- Files > 1 MiB show a size warning.
+- **Title field**: shown between URL and Alt, labelled "Title (optional)". Passed as the `title`
+  attribute on the image node. Round-trips through tiptap-markdown as `![alt](src "title")`.
+  Empty title is excluded (`title || undefined`) so no spurious title appears in markdown.
+  Prefilled from `editor.getAttributes('image').title` in edit mode.
+- **Width/height deliberately excluded**: GFM markdown has no image size syntax; dimensions cannot round-trip through tiptap-markdown's markdown serialiser. Use HTML embed if you need sized images.
+
+**TableForm** — 8×8 grid picker.
+- Hover/click to select dimensions; arrow keys for keyboard navigation.
+- Header row checkbox (default: true).
+- Enter inserts, Escape cancels.
+- Pure reducer `nextSize(size, key)` in `forms/tableGrid.ts` handles clamped navigation.
+
+### Paste/drop images
+
+`WysiwygEditor` has `editorProps.handlePaste` and `handleDrop`:
+- If clipboard items / dropped files contain an image/* MIME type, reads as data URI and inserts `<img>`.
+- Text paste is unchanged (returns false, ProseMirror handles it).
+
+---
+
 ## Link editing (keyboard-first)
 
 Links are keyboard-driven. The link bubble toolbar has been removed.
 
 | Action | How |
 |---|---|
-| Insert a new link | `Ctrl+K` / `Cmd+K` — opens LinkPopover with Text + URL fields |
+| Insert a new link | `Ctrl+K` / `Cmd+K` — opens WidgetPopover with Text + URL fields |
 | Edit an existing link | Place caret inside link → `Ctrl+K` |
-| Wrap selection in link | Select text → `Ctrl+K` |
+| Wrap selection in link | Select text → `Ctrl+K` (or toolbar Link button, or SelectionBubble Link button) |
 | Remove link | `Ctrl+Shift+K` — unlinks immediately |
 | Insert via slash menu | Type `/link` → Enter |
 | Via selection toolbar | Select text → click Link button |
@@ -262,13 +384,31 @@ Links are keyboard-driven. The link bubble toolbar has been removed.
 ## Image editing
 
 1. **Inserting a new image:** type `/image` in the slash menu (or toolbar Image button)
-2. **Editing an existing image:** click to select → bubble toolbar appears:
-   - **Edit** button — reopens the popover prefilled with current src + alt
+   → `WidgetPopover` opens with URL + alt fields + drop zone
+2. **Drag/paste image file:** drop or paste an image file directly onto the editor → inserted as data URI
+3. **Editing an existing image:** click to select → ImageBubble appears:
+   - **Edit** button — reopens WidgetPopover prefilled with current src + alt
    - **Remove** button — deletes the image node
+
+**ImageForm** — URL + Title (optional) + Alt text fields + drag-and-drop/file picker.
+- Drag/paste image file directly → inserted as data URI
+- **Editing an existing image:** click to select → ImageBubble appears:
+   - **Edit** button — reopens WidgetPopover (`node` anchor mode) prefilled with current src + alt + title
+   - **Remove** button — deletes the image node
+
+**Width/height constraint**: Not exposed in the image form. GFM markdown has no image size syntax
+(gravity-ui's `=WxH` YFM extension is not GFM). Dimensions cannot survive the tiptap-markdown
+round-trip. Use a raw HTML `<img>` embed if you need sized images.
 
 ---
 
 ## Table editing
+
+**Insert via widget picker (Phase 2):**
+- Toolbar Table button → WidgetPopover opens with 8×8 grid picker
+- Slash command `/table` → same grid picker
+- Choose dimensions by hovering/clicking or arrow keys + Enter
+- "Header row" checkbox
 
 Tab / Shift-Tab move between cells; Tab on last cell of last row adds a row.
 

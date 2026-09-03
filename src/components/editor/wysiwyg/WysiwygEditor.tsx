@@ -28,11 +28,16 @@
  *   • Debounced emit: onChange is called after 150ms idle (not per keystroke).
  *   • Pending debounce is cancelled before applying an external setContent.
  *
- * New in Phase 1:
- *   • Toolbar (sticky above EditorContent) — data-driven from toolbar/config.ts
- *   • SelectionBubble — floating toolbar for non-empty text selections
- *   • TableBubble updated to mutual-exclude with SelectionBubble
- *   • TooltipProvider wraps the component (for toolbar tooltips)
+ * Phase 2 changes:
+ *   • widgetFormExtension — ProseMirror plugin that renders in-document
+ *     widget chips as Decoration.widget(); React side via WidgetPopover.
+ *   • WidgetPopover replaces LinkPopover + ImagePopover (no more frozen
+ *     position:fixed rect snapshot; Radix virtualRef follows on scroll).
+ *   • TableForm — interactive grid picker for table insertion.
+ *   • ImageForm — added drag-and-drop / file picker, reads files as data URIs.
+ *   • Paste/drop image files → data URI nodes inserted into the editor.
+ *   • openTableRef — table toolbar item and slash menu call openTableWidget.
+ *   • ImageBubble "Edit" routes through widgetForm edit mode.
  */
 
 import {
@@ -66,17 +71,16 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { buildSlashExtension, SlashMenuPortal } from './extensions/slashCommand'
 import type { SlashMenuState, SlashMenuHandle } from './extensions/slashCommand'
 import { buildLinkKeyboardExtension } from './extensions/linkKeyboard'
-import { LinkPopover } from './forms/LinkForm'
-import type { LinkPopoverState } from './forms/LinkForm'
-import { ImagePopover } from './forms/ImageForm'
-import type { ImagePopoverState } from './forms/ImageForm'
+import { widgetFormExtension } from './extensions/widgetForm'
+import { WidgetPopover } from './forms/WidgetPopover'
+import { openLinkWidget, openImageWidget, openTableWidget } from './forms/WidgetPopover'
 import { ImageBubble } from './menus/ImageBubble'
 import { TableBubble } from './menus/TableBubble'
 import { SelectionBubble } from './menus/SelectionBubble'
 import { Toolbar } from './toolbar/Toolbar'
 import { TOOLBAR_CONFIG } from './toolbar/config'
 import type { ToolbarConfig } from './toolbar/config'
-import { getSelectionRect } from './utils'
+import { isImageFile, fileToDataUri } from './forms/imageFile'
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -155,31 +159,14 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
       setMenuRef.current = setSlashMenu
     })
 
-    // ── Link popover state ─────────────────────────────────────────────────
-    const [linkPopover, setLinkPopover] = useState<LinkPopoverState>({
-      open: false,
-      initialText: '',
-      initialHref: '',
-      isEditing: false,
-      anchorRect: null,
-    })
-
+    // ── Widget form opener refs (injected into slash / keyboard extensions) ─
     const openLinkRef = useRef<(() => void) | null>(null)
-
-    // ── Image popover state ────────────────────────────────────────────────
-    const [imagePopover, setImagePopover] = useState<ImagePopoverState>({
-      open: false,
-      initialSrc: '',
-      initialAlt: '',
-      isEditing: false,
-      anchorRect: null,
-    })
-
     const openImageRef = useRef<(() => void) | null>(null)
+    const openTableRef = useRef<(() => void) | null>(null)
 
     // ── Stable extensions ──────────────────────────────────────────────────
     const [slashExtension] = useState(() =>
-      buildSlashExtension(setMenuRef, slashHandleRef, openLinkRef, openImageRef),
+      buildSlashExtension(setMenuRef, slashHandleRef, openLinkRef, openImageRef, openTableRef),
     )
 
     const [linkKeyboardExtension] = useState(() =>
@@ -222,6 +209,7 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
           transformCopiedText: false,
         }),
         linkKeyboardExtension,
+        widgetFormExtension,
         ...(minimal ? [] : [slashExtension]),
       ],
       // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -280,6 +268,35 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
             'min-h-[120px] w-full px-4 py-3',
           ),
         },
+        handlePaste(_view, event) {
+          const items = event.clipboardData?.items
+          if (!items) return false
+          for (const item of Array.from(items)) {
+            if (item.kind === 'file' && item.type.startsWith('image/')) {
+              const file = item.getAsFile()
+              if (!file) continue
+              event.preventDefault()
+              fileToDataUri(file).then((dataUri) => {
+                if (!editor || editor.isDestroyed) return
+                editor.chain().focus().setImage({ src: dataUri, alt: '' }).run()
+              })
+              return true
+            }
+          }
+          return false
+        },
+        handleDrop(_view, event) {
+          const files = event.dataTransfer?.files
+          if (!files || files.length === 0) return false
+          const imageFile = Array.from(files).find(isImageFile)
+          if (!imageFile) return false
+          event.preventDefault()
+          fileToDataUri(imageFile).then((dataUri) => {
+            if (!editor || editor.isDestroyed) return
+            editor.chain().focus().setImage({ src: dataUri, alt: '' }).run()
+          })
+          return true
+        },
       },
     })
 
@@ -333,57 +350,19 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
       editor?.setEditable(!readOnly)
     }, [editor, readOnly])
 
-    // ── Populate popover opener refs ───────────────────────────────────────
+    // ── Populate widget form opener refs ───────────────────────────────────
     useLayoutEffect(() => {
       openLinkRef.current = () => {
         if (!editor) return
-        const { selection } = editor.state
-        const selectedText = editor.state.doc.textBetween(
-          selection.from,
-          selection.to,
-          '',
-        )
-        const linkAttrs = editor.getAttributes('link') as { href?: string }
-        const isEditing = editor.isActive('link')
-
-        let prefillText = selectedText
-        if (!prefillText && isEditing) {
-          const { $from } = selection
-          const linkMark = $from.marks().find((m) => m.type.name === 'link')
-          if (linkMark) {
-            let from = selection.from
-            let to = selection.from
-            while (from > 0 && editor.state.doc.rangeHasMark(from - 1, from, linkMark.type)) {
-              from--
-            }
-            while (to < editor.state.doc.content.size && editor.state.doc.rangeHasMark(to, to + 1, linkMark.type)) {
-              to++
-            }
-            prefillText = editor.state.doc.textBetween(from, to, '')
-          }
-        }
-
-        const anchorRect = getSelectionRect(editor)
-        setLinkPopover({
-          open: true,
-          initialText: prefillText,
-          initialHref: linkAttrs.href ?? '',
-          isEditing,
-          anchorRect,
-        })
+        openLinkWidget(editor)
       }
-
       openImageRef.current = () => {
         if (!editor) return
-        const imageAttrs = editor.getAttributes('image') as { src?: string; alt?: string }
-        const anchorRect = getSelectionRect(editor)
-        setImagePopover({
-          open: true,
-          initialSrc: imageAttrs.src ?? '',
-          initialAlt: imageAttrs.alt ?? '',
-          isEditing: editor.isActive('image'),
-          anchorRect,
-        })
+        openImageWidget(editor)
+      }
+      openTableRef.current = () => {
+        if (!editor) return
+        openTableWidget(editor)
       }
     })
 
@@ -403,101 +382,6 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
     // ── Close slash menu ───────────────────────────────────────────────────
     const handleClose = useCallback(() => setSlashMenu(null), [])
 
-    // ── Link popover handlers ──────────────────────────────────────────────
-    const handleLinkSave = useCallback(
-      (text: string, href: string) => {
-        if (!editor) return
-        setLinkPopover((s) => ({ ...s, open: false }))
-        if (!href) {
-          editor.chain().focus().extendMarkRange('link').unsetLink().run()
-          return
-        }
-        if (text) {
-          const { selection } = editor.state
-          const hasSelection = selection.from !== selection.to
-
-          if (hasSelection) {
-            editor
-              .chain()
-              .focus()
-              .deleteSelection()
-              .insertContent({
-                type: 'text',
-                text,
-                marks: [{ type: 'link', attrs: { href } }],
-              })
-              .run()
-          } else if (editor.isActive('link')) {
-            editor
-              .chain()
-              .focus()
-              .extendMarkRange('link')
-              .deleteSelection()
-              .insertContent({
-                type: 'text',
-                text,
-                marks: [{ type: 'link', attrs: { href } }],
-              })
-              .run()
-          } else {
-            editor
-              .chain()
-              .focus()
-              .insertContent({
-                type: 'text',
-                text,
-                marks: [{ type: 'link', attrs: { href } }],
-              })
-              .run()
-          }
-        } else {
-          editor.chain().focus().extendMarkRange('link').setLink({ href }).run()
-        }
-        editor.commands.focus()
-      },
-      [editor],
-    )
-
-    const handleLinkRemove = useCallback(() => {
-      setLinkPopover((s) => ({ ...s, open: false }))
-      editor?.chain().focus().extendMarkRange('link').unsetLink().run()
-    }, [editor])
-
-    const handleLinkClose = useCallback(() => {
-      setLinkPopover((s) => ({ ...s, open: false }))
-      editor?.commands.focus()
-    }, [editor])
-
-    // ── Image popover handlers ─────────────────────────────────────────────
-    const handleImageSave = useCallback(
-      (src: string, alt: string) => {
-        if (!editor) return
-        setImagePopover((s) => ({ ...s, open: false }))
-        if (!src) {
-          editor.commands.focus()
-          return
-        }
-        if (editor.isActive('image')) {
-          editor.chain().focus().updateAttributes('image', { src, alt }).run()
-        } else {
-          editor.chain().focus().setImage({ src, alt }).run()
-        }
-        editor.commands.focus()
-      },
-      [editor],
-    )
-
-    const handleImageRemove = useCallback(() => {
-      setImagePopover((s) => ({ ...s, open: false }))
-      if (!editor) return
-      editor.chain().focus().deleteSelection().run()
-    }, [editor])
-
-    const handleImageClose = useCallback(() => {
-      setImagePopover((s) => ({ ...s, open: false }))
-      editor?.commands.focus()
-    }, [editor])
-
     // ── Toolbar config resolution ──────────────────────────────────────────
     const resolvedToolbarConfig: ToolbarConfig | false = useMemo(() => {
       if (minimal || toolbar === false) return false
@@ -508,6 +392,7 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
     const toolbarActions = useMemo(() => ({
       openLink: () => openLinkRef.current?.(),
       openImage: () => openImageRef.current?.(),
+      openTable: () => openTableRef.current?.(),
     }), [])
 
     // ── Render ─────────────────────────────────────────────────────────────
@@ -560,21 +445,10 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
             />
           )}
 
-          {/* ── Link popover form ────────────────────────────────────────── */}
-          <LinkPopover
-            state={linkPopover}
-            onSave={handleLinkSave}
-            onRemove={handleLinkRemove}
-            onClose={handleLinkClose}
-          />
-
-          {/* ── Image popover form ───────────────────────────────────────── */}
-          <ImagePopover
-            state={imagePopover}
-            onSave={handleImageSave}
-            onRemove={handleImageRemove}
-            onClose={handleImageClose}
-          />
+          {/* ── Widget popover (link / image / table) ────────────────────── */}
+          {editor && !readOnly && (
+            <WidgetPopover editor={editor} />
+          )}
         </div>
       </TooltipProvider>
     )

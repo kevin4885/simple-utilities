@@ -12,6 +12,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, act } from '@testing-library/react'
 import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
+import Image from '@tiptap/extension-image'
 import { Markdown } from 'tiptap-markdown'
 import WysiwygEditor, { type WysiwygEditorHandle } from './WysiwygEditor'
 
@@ -62,5 +63,59 @@ describe('WysiwygEditor lifecycle', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Image title round-trip
+// ---------------------------------------------------------------------------
+
+describe('Image title tiptap-markdown round-trip', () => {
+  /**
+   * Verify that tiptap-markdown serialises an image with a title attribute
+   * as `![alt](src "title")` (standard CommonMark image-with-title syntax).
+   *
+   * We use tiptap-markdown directly (no React, no JSDOM) so this test works
+   * in the Vitest Node environment.
+   */
+  it('round-trips ![alt](src "title") through tiptap-markdown', () => {
+    const md = '![a cat](https://example.com/cat.jpg "Cute cat")'
+    const editor = new Editor({
+      extensions: [
+        StarterKit,
+        Image,
+        Markdown.configure({ html: false }),
+      ],
+      content: md,
+    })
+
+    const storage = editor.storage as unknown as Record<string, { getMarkdown?: () => string } | undefined>
+    const serialized = storage.markdown?.getMarkdown?.() ?? ''
+    editor.destroy()
+
+    // Should contain the title in the standard Markdown image-with-title form
+    expect(serialized).toContain('"Cute cat"')
+    expect(serialized).toContain('https://example.com/cat.jpg')
+    expect(serialized).toContain('![a cat]')
+  })
+
+  it('omits title from markdown output when title attribute is empty', () => {
+    const md = '![a cat](https://example.com/cat.jpg)'
+    const editor = new Editor({
+      extensions: [
+        StarterKit,
+        Image,
+        Markdown.configure({ html: false }),
+      ],
+      content: md,
+    })
+
+    const storage = editor.storage as unknown as Record<string, { getMarkdown?: () => string } | undefined>
+    const serialized = storage.markdown?.getMarkdown?.() ?? ''
+    editor.destroy()
+
+    expect(serialized).toContain('https://example.com/cat.jpg')
+    // No title attribute → no quoted string in the output
+    expect(serialized).not.toMatch(/"[^"]*"/)
   })
 })

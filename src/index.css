@@ -324,6 +324,39 @@
     margin: 0 0.125rem;
     flex-shrink: 0;
   }
+
+  /* ── Widget anchor chip (Phase 2) ─────────────────────────────── */
+  /* Rendered as a ProseMirror Decoration.widget() at the cursor
+     position when a link/image/table form is open. The Radix Popover
+     anchors to this real DOM element, so it follows on scroll. */
+  .wysiwyg-widget-anchor {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.1em 0.4em;
+    background: var(--muted);
+    color: var(--muted-foreground);
+    border: 1px solid var(--border);
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    vertical-align: middle;
+    white-space: nowrap;
+    user-select: none;
+    cursor: default;
+    /* Keep it visually at the caret without disrupting line height too much */
+    margin: 0 1px;
+  }
+  .wysiwyg-widget-anchor svg {
+    flex-shrink: 0;
+  }
+
+  /* ── Link target range highlight (Phase 2) ───────────────────── */
+  /* Applied to the selected link range while the link form is open. */
+  .wysiwyg-link-target {
+    background: color-mix(in srgb, var(--primary) 15%, transparent);
+    border-radius: 0.25rem;
+  }
 }
 
 /* ── Native scrollbars — match shadcn ScrollArea appearance ────── */

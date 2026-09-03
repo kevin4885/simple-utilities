@@ -1,42 +1,35 @@
 /**
  * wysiwyg/forms/LinkForm.tsx
  *
- * LinkForm / LinkPopover — modal-free inline form for inserting/editing links.
- * Moved from WysiwygEditor.tsx. Unchanged behaviour.
+ * LinkForm — pure form component for inserting/editing links.
+ * Rendered inside WidgetPopover (Phase 2). The old LinkPopover wrapper
+ * (with frozen position:fixed anchor) has been removed.
+ *
+ * Exported:
+ *   LinkForm        — the form UI
+ *   LinkPopoverState / LinkPopoverProps — kept for test/external compatibility
  */
 
 import { useState, useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  Popover,
-  PopoverContent,
-  PopoverAnchor,
-} from '@/components/ui/popover'
-import { normalizeUrl, anchorRectToStyle } from '../utils'
-import type { SelectionRect } from '../utils'
+import { normalizeUrl } from '../utils'
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
+/** @deprecated — kept for backward-compat; use WidgetPopover instead */
 export interface LinkPopoverState {
   open: boolean
   initialText: string
   initialHref: string
   isEditing: boolean
-  anchorRect: SelectionRect | null
+  anchorRect: null
 }
 
-interface LinkPopoverProps {
-  state: LinkPopoverState
-  onSave: (text: string, href: string) => void
-  onRemove: () => void
-  onClose: () => void
-}
-
-interface LinkFormProps {
+export interface LinkFormProps {
   initialText: string
   initialHref: string
   isEditing: boolean
@@ -49,7 +42,7 @@ interface LinkFormProps {
 // LinkForm
 // ---------------------------------------------------------------------------
 
-function LinkForm({
+export function LinkForm({
   initialText,
   initialHref,
   isEditing,
@@ -71,7 +64,7 @@ function LinkForm({
         textInputRef.current?.focus()
       }
     }, 50)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   function handleSave() {
@@ -154,36 +147,5 @@ function LinkForm({
         )}
       </div>
     </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// LinkPopover
-// ---------------------------------------------------------------------------
-
-export function LinkPopover({ state, onSave, onRemove, onClose }: LinkPopoverProps) {
-  const formKey = `${state.open}|${state.initialText}|${state.initialHref}`
-
-  return (
-    <Popover open={state.open} onOpenChange={(open) => { if (!open) onClose() }}>
-      <PopoverAnchor asChild>
-        <span style={anchorRectToStyle(state.anchorRect)} />
-      </PopoverAnchor>
-      <PopoverContent
-        className="w-80 p-4"
-        onOpenAutoFocus={(e) => e.preventDefault()}
-        onInteractOutside={onClose}
-      >
-        <LinkForm
-          key={formKey}
-          initialText={state.initialText}
-          initialHref={state.initialHref}
-          isEditing={state.isEditing}
-          onSave={onSave}
-          onRemove={onRemove}
-          onClose={onClose}
-        />
-      </PopoverContent>
-    </Popover>
   )
 }

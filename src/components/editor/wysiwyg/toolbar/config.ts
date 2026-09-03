@@ -57,6 +57,7 @@ export { ChevronDown }
 export interface ToolbarActions {
   openLink?: () => void
   openImage?: () => void
+  openTable?: () => void
 }
 
 export interface ToolbarItem {
@@ -372,10 +373,9 @@ export const TOOLBAR_CONFIG: ToolbarConfig = [
       id: 'table',
       title: 'Table',
       icon: Table,
-      exec: (editor) =>
-        editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
+      exec: (_editor, actions) => actions?.openTable?.(),
       keywords: ['table', 'grid', '|'],
-      description: 'Insert a 3×3 table',
+      description: 'Insert a table (grid picker)',
     },
     {
       id: 'horizontalRule',

@@ -214,6 +214,7 @@ export function buildSlashExtension(
   handleRef: MutableRefObject<SlashMenuHandle | null>,
   openLinkRef: MutableRefObject<(() => void) | null>,
   openImageRef: MutableRefObject<(() => void) | null>,
+  openTableRef?: MutableRefObject<(() => void) | null>,
 ): Extension {
   let itemsVersion = 0
 
@@ -238,6 +239,7 @@ export function buildSlashExtension(
             props.exec(editor, {
               openLink: () => openLinkRef.current?.(),
               openImage: () => openImageRef.current?.(),
+              openTable: () => openTableRef?.current?.(),
             })
           },
           items({ query }: { query: string }): SlashCommand[] {

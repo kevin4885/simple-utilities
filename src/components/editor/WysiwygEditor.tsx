@@ -1179,10 +1179,20 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
     const debounceMsRef = useRef(onChangeDebounceMs)
     useLayoutEffect(() => { debounceMsRef.current = onChangeDebounceMs })
 
-    // Helper: get markdown from editor storage
-    function getMarkdown(e: NonNullable<ReturnType<typeof useEditor>>): string {
+    // Helper: get markdown from editor storage.
+    // Returns null when the editor is destroyed or the tiptap-markdown storage
+    // is missing. TipTap v3 Editor.destroy() resets extensionStorage to {}, and
+    // useEditor() destroys/recreates instances (StrictMode double-mount, deps
+    // change), so closures captured on an old instance (debounce timer, blur
+    // handler, flush ref) can observe a destroyed editor. Reading
+    // storage.markdown.getMarkdown() there throws "Cannot read properties of
+    // undefined (reading 'getMarkdown')" — never call into it unguarded.
+    function getMarkdown(e: Editor | null | undefined): string | null {
+      if (!e || e.isDestroyed) return null
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return ((e.storage as Record<string, any>).markdown as MarkdownStorage).getMarkdown()
+      const md = (e.storage as Record<string, any>).markdown as MarkdownStorage | undefined
+      if (!md || typeof md.getMarkdown !== 'function') return null
+      return md.getMarkdown()
     }
 
     /**
@@ -1207,12 +1217,14 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
         if (delayMs <= 0) {
           // Synchronous path (delayMs=0)
           const md = getMarkdown(e)
+          if (md === null) return
           lastEmittedMd.current = md
           onChangeRef.current?.(md)
         } else {
           debounceTimerRef.current = setTimeout(() => {
             debounceTimerRef.current = null
             const md = getMarkdown(e)
+            if (md === null) return
             lastEmittedMd.current = md
             onChangeRef.current?.(md)
           }, delayMs)
@@ -1237,6 +1249,7 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
           debounceTimerRef.current = null
         }
         const md = getMarkdown(editor)
+        if (md === null) return
         lastEmittedMd.current = md
         onChangeRef.current?.(md)
       }
@@ -1337,7 +1350,7 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
 
     // ── Sync external value → editor (e.g. doc switch) ────────────────────
     useEffect(() => {
-      if (!editor) return
+      if (!editor || editor.isDestroyed) return
       // If value equals what we last emitted, this is our own round-trip — skip.
       if (value === lastEmittedMd.current) return
       // Cancel any pending debounce before forcing a setContent.

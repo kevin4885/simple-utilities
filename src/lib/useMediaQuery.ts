@@ -15,35 +15,35 @@
 
 import { useMemo, useSyncExternalStore } from 'react'
 
-function getServerSnapshot(): boolean {
-  return false
-}
-
 export function useMediaQuery(query: string, defaultValue = false): boolean {
-  // ssrSnapshot — used on server and in environments without matchMedia
-  const ssrSnapshot = defaultValue
-
   // Memoize subscribe and getSnapshot so they are stable across renders
   // (avoids tearing down + re-adding the addEventListener on every render).
-  const [subscribe, getSnapshot] = useMemo(() => {
+  // The MediaQueryList is created once per query inside the memo so
+  // getSnapshot does not call matchMedia on every invocation.
+  const [subscribe, getSnapshot, getServerSnapshot] = useMemo(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      // SSR / jsdom without matchMedia — stable no-ops
+      const sub = () => () => {}
+      const snap = () => defaultValue
+      const serverSnap = () => defaultValue
+      return [sub, snap, serverSnap] as const
+    }
+
+    const mql = window.matchMedia(query)
+
     const sub = (callback: () => void) => {
-      if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
-        return () => {}
-      }
-      const mql = window.matchMedia(query)
       mql.addEventListener('change', callback)
       return () => mql.removeEventListener('change', callback)
     }
 
-    const snap = () => {
-      if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
-        return ssrSnapshot
-      }
-      return window.matchMedia(query).matches
-    }
+    const snap = () => mql.matches
 
-    return [sub, snap]
-  }, [query, ssrSnapshot])
+    // getServerSnapshot must be a stable function returning the default value.
+    // React uses this during SSR and hydration mismatch detection.
+    const serverSnap = () => defaultValue
+
+    return [sub, snap, serverSnap] as const
+  }, [query, defaultValue])
 
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
 }

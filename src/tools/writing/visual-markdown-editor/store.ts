@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { z } from 'zod'
-import { generateDocTitle, pruneAutoVersions, AUTO_VERSION_CAP } from './logic'
+import { generateDocTitle, pruneAutoVersions, AUTO_VERSION_CAP, EDITOR_MODE_IDS } from './logic'
 
 // ---------------------------------------------------------------------------
 // Schema (Zod — validates on rehydrate)
@@ -27,7 +27,7 @@ const DocSchema = z.object({
 const ModelSchema = z.enum(['gpt4o', 'claude', 'gemini'])
 
 /** Phase 4: added editorMode and hintDismissed to persisted state. */
-const EditorModeSchema = z.enum(['wysiwyg', 'markdown', 'preview', 'split'])
+const EditorModeSchema = z.enum(EDITOR_MODE_IDS)
 
 const PersistedSchema = z.object({
   docs: z.array(DocSchema).min(1),

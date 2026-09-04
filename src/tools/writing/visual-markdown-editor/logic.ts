@@ -26,8 +26,16 @@ export {
 // VME-specific helpers
 // ---------------------------------------------------------------------------
 
-/** Editor mode ids — must match EditorModeSchema in store.ts. */
-export type EditorModeId = 'wysiwyg' | 'markdown' | 'preview' | 'split'
+/**
+ * Tuple of all valid editor mode ids — single source of truth.
+ * store.ts derives EditorModeSchema from this via z.enum(EDITOR_MODE_IDS).
+ * Adding a mode: add one entry here, one EditorModeMeta row in EDITOR_MODES,
+ * and one icon entry in index.tsx's modeIcons map.
+ */
+export const EDITOR_MODE_IDS = ['wysiwyg', 'markdown', 'preview', 'split'] as const
+
+/** Union type derived from EDITOR_MODE_IDS — no duplication with store.ts. */
+export type EditorModeId = typeof EDITOR_MODE_IDS[number]
 
 export interface EditorModeMeta {
   id: EditorModeId

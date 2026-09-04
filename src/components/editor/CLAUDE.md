@@ -18,12 +18,14 @@ These are hand-rolled app components — **not** shadcn/ui (which lives in `src/
 | Path | Purpose |
 |---|---|
 | `WysiwygEditor.tsx` | **Main component** — assembles all submodules; exports `WysiwygEditorHandle` / `WysiwygEditorProps` |
-| `WysiwygErrorBoundary.tsx` | **Error boundary** — class component wrapping `<WysiwygEditor>` usage; on crash flushes pending edits, calls `onError` prop, renders inline fallback; see Phase 4 section below |
+| `WysiwygErrorBoundary.tsx` | **Error boundary** — class component wrapping `<WysiwygEditor>` usage; on crash flushes pending edits, calls `onError` prop, renders `null` (page manages crash banner); see Phase 4 section below |
+| `coreExtensions.ts` | `buildCoreExtensions(opts?)` — single source of truth for all serialisation-relevant extensions; imported by both `WysiwygEditor.tsx` and `testUtils.ts` |
 | `utils.ts` | `normalizeUrl()` + `sanitizeImageSrc()` + `getScrollParent()` + `getLinkRange(state)` — URL sanitisation, nearest-scrollable-ancestor finder, link mark range helper |
-| `utils.test.ts` | Tests for `wysiwyg/utils.ts` (full normalizeUrl suite + getLinkRange + autolink round-trip) |
+| `utils.test.ts` | Tests for `wysiwyg/utils.ts` (full normalizeUrl suite + sanitizeImageSrc + getLinkRange + autolink round-trip) |
 | `extensions/linkKeyboard.ts` | `MARKDOWN_LINK_REGEX` + `buildLinkKeyboardExtension` (Mod-k, Mod-Shift-k, table shortcuts, input rule) |
 | `extensions/slashCommand.tsx` | `buildSlashExtension` + `SlashMenuPortal` / `SlashMenuInner` (derives items from `SLASH_ITEMS`) |
 | `extensions/widgetForm.ts` | `widgetFormExtension` — ProseMirror plugin; in-document widget chip decorations; see below |
+| `extensions/tableInvariant.ts` | `tableInvariantExtension` — ProseMirror `appendTransaction` plugin; enforces GFM header-row invariant on every doc-changing transaction |
 | `forms/LinkForm.tsx` | `LinkForm` — pure form component for inserting/editing links (no popover wrapper) |
 | `forms/ImageForm.tsx` | `ImageForm` — pure form component for inserting/editing images + drag-and-drop file picker |
 | `forms/TableForm.tsx` | `TableForm` — 8×8 grid picker for table insertion (Phase 2) |
@@ -407,13 +409,14 @@ round-trip. Use a raw HTML `<img>` embed if you need sized images.
 - Toolbar Table button → WidgetPopover opens with 8×8 grid picker
 - Slash command `/table` → same grid picker
 - Choose dimensions by hovering/clicking or arrow keys + Enter
-- "Header row" checkbox
+- Tables are always inserted with `withHeaderRow: true` — no checkbox
 
 Tab / Shift-Tab move between cells; Tab on last cell of last row adds a row.
 
 **Hover controls (Phase 3 — see tableControls section below):**
-- Row handle pill (left edge of hovered row): insert above/below, move up/down, toggle header, delete row, delete table.
+- Row handle pill (left edge of hovered row): insert above/below, move up/down, delete row *(disabled on header row)*, delete table.
 - Column handle pill (top edge of hovered column): insert left/right, move left/right, delete column, delete table.
+- "Toggle header row" has been removed — GFM tables always have exactly one header row.
 - Edge "+" buttons: append column (right edge), append row (bottom edge).
 - Focused table gets a subtle ring outline (`wysiwyg-table-focused` decoration class).
 
@@ -602,14 +605,22 @@ import { WysiwygErrorBoundary } from '@/components/editor/wysiwyg/WysiwygErrorBo
 
 **Note**: boundary lives at the **page level** (VME tool), not inside WysiwygEditor itself.
 
-### GFM header-row invariant (tableControls)
+### GFM header-row invariant (tableInvariant + tableControls)
 
 GFM tables always have exactly one header row (row 0 = all `tableHeader` nodes; rows 1+ = all `tableCell` nodes). tiptap-markdown's `isMarkdownSerializable` check enforces this. Violated tables fall back to the HTML serialiser which, with `html: false`, emits `[table]`.
 
-**Protected invariant:**
+**Document-level enforcement (primary defence):**
+`extensions/tableInvariant.ts` — a `tableInvariantExtension` ProseMirror plugin with `appendTransaction`. On any doc-changing transaction it walks all table nodes, collects cells with the wrong type (header in body row, cell in header row), and returns a single fixing transaction via `setNodeMarkup`. The fix is marked `addToHistory: false`. The plugin is idempotent: after one fix the next appendTransaction pass finds no violations and returns `null`.
+
+This means:
+- `Mod-Shift-Enter` (addRowBefore) on the header row is **safe** — the new row is normalised to header, old header becomes body.
+- `Mod-Alt-Backspace` (deleteRow) on the header row is **safe** — the surviving first row is promoted to header.
+- Any future command or HTML paste that produces a cell-type violation is silently corrected.
+
+**UX guards (secondary defence — convenience, not correctness):**
 - Tables are **always inserted with `withHeaderRow: true`** — the "Header row" checkbox has been removed from `TableForm`.
-- **"Insert row above"** is disabled when `rowIdx === 0` (would insert a body row above the header).
-- **"Delete row"** is disabled when `rowIdx === 0` (deleting the header makes the first body row become row 0).
+- **"Insert row above"** is disabled when `rowIdx === 0` in the menu (still works via keyboard; invariant corrects the result).
+- **"Delete row"** is disabled when `rowIdx === 0` in the menu (still works via keyboard; invariant corrects the result).
 - **"Move row up"** is disabled when `rowIdx <= 1` (row 1 cannot move above the header; row 0 is the header).
 - **"Move row down"** is disabled when `rowIdx === 0` (header must never move).
 - **"Toggle header row"** has been removed — not a valid GFM operation.
@@ -627,10 +638,14 @@ The module-level `_dropdownOpen` flag has been replaced with `menuOpen: boolean`
 
 **Row/col index snapshot:** `TableControls` snapshots `rowIdx`/`colIdx` into `rowMenuTarget`/`colMenuTarget` React state when a menu opens. All menu-action callbacks use the snapshot instead of live hover values, preventing Radix portal mouse-leave from changing the target index between open and click.
 
-### testUtils (`wysiwyg/testUtils.ts`)
+### testUtils (`wysiwyg/testUtils.ts`) and coreExtensions (`wysiwyg/coreExtensions.ts`)
 
-Exports headless test helpers that use **the exact same extension config as WysiwygEditor**:
-- `buildCoreExtensions(opts?)` — returns the serialisation-relevant extension array
+`wysiwyg/coreExtensions.ts` is the **single source of truth** for all serialisation-relevant extensions. It exports `buildCoreExtensions(opts?)` which is imported by:
+- `WysiwygEditor.tsx` — spread into the `useMemo` extensions array (+ ref/UI-dependent extensions appended after)
+- `testUtils.ts` — used by `createTestEditor` so test editor configs can never diverge from production
+
+`wysiwyg/testUtils.ts` re-exports `buildCoreExtensions` and adds headless test helpers:
+- `buildCoreExtensions(opts?)` — re-exported from `coreExtensions.ts`
 - `createTestEditor(markdown)` — headless `Editor` with that config, pre-loaded with `markdown`
 - `getMarkdown(editor)` — serialises via tiptap-markdown storage
 
@@ -644,7 +659,13 @@ The panel group is keyed on orientation (`key={isDesktop ? 'split-h' : 'split-v'
 
 The VME page uses a **single unified layout**: the editor area is rendered once (not duplicated in a hidden desktop + mobile block). The desktop vs mobile difference is only whether the collapsible right-panel doc list is shown (controlled by `isDesktop`).
 
-**Mode ids / labels / titles / order** live in `EDITOR_MODES` in the VME `logic.ts` (React-free single source of truth; `getModeLabel()` reads from it). `index.tsx` only adds the Lucide icon per id (`modeIcons`) and maps over `EDITOR_MODES` to render the toggle. Adding a mode = one entry in `EDITOR_MODES`, one icon, and the `EditorModeSchema` enum in `store.ts`.
+**Mode ids / labels / titles / order** live in `EDITOR_MODES` in the VME `logic.ts` (React-free single source of truth; `getModeLabel()` reads from it). `index.tsx` only adds the Lucide icon per id (`modeIcons`) and maps over `EDITOR_MODES` to render the toggle.
+
+**Adding a mode** (one change per location):
+1. Add one entry to `EDITOR_MODE_IDS` in `logic.ts` (derives `EditorModeId` type)
+2. Add one `EditorModeMeta` row to `EDITOR_MODES` in `logic.ts` (label, title)
+3. Add one icon entry to `modeIcons` in `index.tsx`
+4. `store.ts` derives `EditorModeSchema` automatically from `EDITOR_MODE_IDS` via `z.enum(EDITOR_MODE_IDS)` — no change needed there.
 
 ### Preview toggle keyboard shortcut
 
@@ -658,13 +679,13 @@ Every code path that inserts or updates an image `src` must call `sanitizeImageS
 - `WidgetPopover.tsx handleImageSave` — calls `sanitizeImageSrc`
 - `WysiwygEditor.tsx handlePaste` / `handleDrop` — calls `sanitizeImageSrc` on the data URI
 
-`sanitizeImageSrc` passes `data:image/*` through unchanged, and runs `normalizeUrl` on everything else (which blocks `javascript:` / `vbscript:` and prepends `https://` to bare domains).
+`sanitizeImageSrc` passes `data:image/*` and `blob:` URIs through unchanged, rejects all other `data:` schemes (e.g. `data:text/html`), and runs `normalizeUrl` on everything else (which blocks `javascript:` / `vbscript:` and prepends `https://` to bare domains).
 
 ### extensions useMemo deps
 
 `WysiwygEditor` keeps `readOnly` and `placeholder` **out of the `extensions` useMemo deps**. Changing them must not rebuild the editor (which would destroy undo history and lose the selection). Instead:
-- `readOnly` changes are applied via `editor.setEditable(!readOnly)` in a `useEffect`
-- `placeholder` changes are read from a ref inside extension callbacks
+- `readOnly` changes are applied via `editor.setEditable(!readOnly)` in a `useEffect`. `Link.configure({ openOnClick: false })` is a constant — TipTap's built-in `view.editable` check already prevents link-click navigation in read-only mode.
+- `placeholder` changes are reflected live via `Placeholder.configure({ placeholder: () => placeholderRef.current })` — the function closure always reads the current ref value, so the decoration is updated on the next view update without rebuilding the editor.
 
 Only `minimal` is in the deps (because it changes the structural extension array by adding/removing the slash menu).
 

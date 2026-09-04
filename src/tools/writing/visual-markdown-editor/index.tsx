@@ -95,7 +95,9 @@ import {
   countChars,
   countLines,
   toSafeFilename,
-  KEYBOARD_SHORTCUTS, EDITOR_MODES } from './logic'
+  KEYBOARD_SHORTCUTS,
+  EDITOR_MODES,
+} from './logic'
 import { useVmeStore, type VmeDoc, type VmeModel, type VmeEditorMode } from './store'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -514,10 +516,14 @@ export default function VisualMarkdownEditorPage() {
   const [docsOpen, setDocsOpen] = useState(true)
   const [mobileDocsOpen, setMobileDocsOpen] = useState(false)
 
+  // Error state for the wysiwyg panel — declared before handleModeChange
+  // (which references it) to avoid a stale-closure if it were declared later.
+  const [wysiwygError, setWysiwygError] = useState(false)
+
   // Ref to WysiwygEditor's imperative handle for flushing before mode switch
   const wysiwygRef = useRef<WysiwygEditorHandle>(null)
 
-  // Track previous non-preview mode for Ctrl+Shift+P toggle
+  // Track previous non-preview mode for Ctrl+Alt+P toggle
   const prevNonPreviewMode = useRef<VmeEditorMode>(mode !== 'preview' ? mode : 'wysiwyg')
 
   // Media query for split mode direction (vertical on mobile, horizontal on desktop)
@@ -552,7 +558,7 @@ export default function VisualMarkdownEditorPage() {
     if (mode === 'wysiwyg') {
       wysiwygRef.current?.flush()
     }
-    // Track last non-preview mode for Ctrl+Shift+P toggle
+    // Track last non-preview mode for Ctrl+Alt+P toggle
     if (mode !== 'preview') {
       prevNonPreviewMode.current = mode
     }
@@ -565,8 +571,6 @@ export default function VisualMarkdownEditorPage() {
   }
 
   // ── Error boundary handler ─────────────────────────────────────────────────
-
-  const [wysiwygError, setWysiwygError] = useState(false)
 
   function handleWysiwygError() {
     // Boundary already flushed; switch to markdown mode and show the banner
@@ -653,18 +657,21 @@ export default function VisualMarkdownEditorPage() {
 
   const topToolbar = (
     <div className="flex items-center gap-1 px-2 py-1.5 border-b border-border bg-card shrink-0 min-w-0">
-      {/* Mobile: doc list trigger */}
-      <Sheet open={mobileDocsOpen} onOpenChange={setMobileDocsOpen}>
-        <SheetTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 md:hidden shrink-0"
-            aria-label="Open documents"
-          >
-            <PanelLeft className="h-4 w-4" />
-          </Button>
-        </SheetTrigger>
+      {/* Mobile: doc list trigger. Gated on the same isDesktop query as the
+          desktop Collapsible so exactly one Documents UI exists at any width. */}
+      <Sheet open={mobileDocsOpen && !isDesktop} onOpenChange={setMobileDocsOpen}>
+        {!isDesktop && (
+          <SheetTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 shrink-0"
+              aria-label="Open documents"
+            >
+              <PanelLeft className="h-4 w-4" />
+            </Button>
+          </SheetTrigger>
+        )}
         <SheetContent side="right" className="w-64 p-0">
           <SheetHeader className="sr-only">
             <SheetTitle>Documents</SheetTitle>

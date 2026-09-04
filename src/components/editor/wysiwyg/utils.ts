@@ -106,18 +106,30 @@ export function getScrollParent(el: HTMLElement | null): HTMLElement | Element |
 /**
  * Sanitise an image src before inserting/updating it in the editor.
  *
- * - Passes `data:image/*` URIs through unchanged (needed for file drop/paste).
- * - Runs `normalizeUrl` on everything else, which blocks `javascript:` / `vbscript:`.
- * - Returns '' if the result is empty (caller should not insert).
+ * Allowed sources:
+ *   • `data:image/*`  — file drop/paste data URIs; passed through unchanged.
+ *   • `blob:`         — object URLs created by the browser; passed through.
+ *   • `https://` / `http://` — remote image URLs (via normalizeUrl).
+ *   • Relative paths  — `/foo`, `./foo`, `../foo` (via normalizeUrl).
+ *   • `#anchor`       — fragment-only references (unusual but valid).
  *
- * This is a thin wrapper so every code-path that inserts an image src goes
- * through the same security check.
+ * Rejected:
+ *   • `javascript:`, `vbscript:` — dangerous; normalizeUrl returns ''.
+ *   • `data:text/html`, `data:application/*` — not images; rejected here
+ *     before normalizeUrl would otherwise pass them through.
+ *   • Empty / whitespace-only input.
+ *
+ * Returns '' if the result is empty (caller should not insert).
  */
 export function sanitizeImageSrc(src: string): string {
   const trimmed = src.trim()
   if (!trimmed) return ''
-  // data: URIs (file drop / paste) are safe and must not be mangled by normalizeUrl
+  // data:image/* URIs (file drop / paste) are safe and must not be mangled by normalizeUrl
   if (trimmed.startsWith('data:image/')) return trimmed
+  // blob: object URLs are safe (created by the browser for file previews)
+  if (trimmed.startsWith('blob:')) return trimmed
+  // Reject any other data: URI (e.g. data:text/html, data:application/javascript)
+  if (trimmed.startsWith('data:')) return ''
   return normalizeUrl(trimmed)
 }
 

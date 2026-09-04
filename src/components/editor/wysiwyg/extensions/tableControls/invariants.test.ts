@@ -9,8 +9,15 @@
  *   - moveRow(…, 0, 1) returns false and leaves doc unchanged
  *   - moveRow(…, 1, 0) returns false and leaves doc unchanged
  *
+ * Also verifies the tableInvariant appendTransaction plugin (Blocking 1):
+ *   - addRowBefore on the header row normalises the result
+ *   - deleteRow on the header row normalises the result
+ *   - Direct cell-type corruption (row-0 cell swapped to tableCell) is repaired
+ *   - Two-table docs: both tables normalised
+ *   - A valid table produces no appended transaction (idempotency)
+ *
  * Uses createTestEditor() from testUtils so the editor config exactly matches
- * WysiwygEditor (including allowBase64, Markdown options).
+ * WysiwygEditor (including allowBase64, Markdown options, tableInvariant).
  *
  * Note: these tests run headless (no DOM). Operations that need a table
  * selection use selectRow/selectColumn from commands.ts to position the
@@ -292,3 +299,200 @@ describe('tableControlsPlugin menuOpen meta', () => {
     expect(tableControlsKey.getState(pluginEditor.state)?.hover).toEqual({ rowIdx: 1, colIdx: 0 })
   })
 })
+
+// ---------------------------------------------------------------------------
+// tableInvariant appendTransaction plugin (Blocking 1)
+//
+// Uses createTestEditor() which includes tableInvariantExtension via
+// buildCoreExtensions(). These tests confirm that any transaction that leaves
+// cells with the wrong type is immediately corrected before serialisation.
+// ---------------------------------------------------------------------------
+
+/**
+ * Count the number of rows in the first table in the editor doc.
+ */
+function countTableRows(editor: TipTapEditor): number {
+  let rows = 0
+  editor.state.doc.descendants((node) => {
+    if (node.type.name === 'table') {
+      node.forEach((child) => {
+        if (child.type.name === 'tableRow') rows++
+      })
+      return false // stop after first table
+    }
+    return true
+  })
+  return rows
+}
+
+/**
+ * Returns the column count of the first table's first row.
+ */
+function countTableCols(editor: TipTapEditor): number {
+  let cols = 0
+  editor.state.doc.descendants((node) => {
+    if (node.type.name === 'table') {
+      const firstRow = node.firstChild
+      if (firstRow) cols = firstRow.childCount
+      return false
+    }
+    return true
+  })
+  return cols
+}
+
+describe('tableInvariant plugin — GFM header-row enforcement', () => {
+  let editor: TipTapEditor
+
+  afterEach(() => { editor?.destroy() })
+
+  // ── addRowBefore on the header row ─────────────────────────────────────────
+  // Mod-Shift-Enter (addRowBefore) with cursor in row 0 inserts a new row at
+  // position 0. Without the invariant plugin the old header becomes a body row
+  // but remains typed as tableHeader → [table] on serialise.
+  // With the invariant plugin the new row 0 becomes tableHeader and the old
+  // header (now row 1) becomes tableCell.
+  it('addRowBefore on header row: result still serialises as GFM table', () => {
+    editor = createTestEditor(TABLE_2X2)
+    const tablePos = editorTablePos(editor)
+    // Select header row (row 0) so addRowBefore inserts above it
+    selectRow(editor, tablePos, 0)
+    editor.chain().addRowBefore().run()
+    const md = getMarkdown(editor)
+    expect(isGfmTable(md)).toBe(true)
+    expect(md).not.toContain('[table]')
+    // Row count should have increased by 1 (was 2 rows: 1 header + 1 body)
+    expect(countTableRows(editor)).toBe(3)
+  })
+
+  it('addRowBefore on header row: column count is unchanged', () => {
+    const colsBefore = 2 // TABLE_2X2 has 2 columns
+    editor = createTestEditor(TABLE_2X2)
+    const tablePos = editorTablePos(editor)
+    selectRow(editor, tablePos, 0)
+    editor.chain().addRowBefore().run()
+    expect(countTableCols(editor)).toBe(colsBefore)
+  })
+
+  // ── deleteRow on the header row ────────────────────────────────────────────
+  // Mod-Alt-Backspace (deleteRow) with cursor in row 0 removes the header.
+  // Without the invariant plugin row 1 (tableCell) becomes row 0 → [table].
+  // With the invariant plugin row 1 (now row 0) is promoted to tableHeader.
+  it('deleteRow on header row: result still serialises as GFM table', () => {
+    editor = createTestEditor(TABLE_3X3)
+    const tablePos = editorTablePos(editor)
+    selectRow(editor, tablePos, 0)
+    editor.chain().deleteRow().run()
+    const md = getMarkdown(editor)
+    expect(isGfmTable(md)).toBe(true)
+    expect(md).not.toContain('[table]')
+  })
+
+  it('deleteRow on header row: remaining rows = N-1', () => {
+    editor = createTestEditor(TABLE_3X3)
+    const tablePos = editorTablePos(editor)
+    selectRow(editor, tablePos, 0)
+    editor.chain().deleteRow().run()
+    // TABLE_3X3 had 3 rows; after deleting the header, 2 rows remain
+    expect(countTableRows(editor)).toBe(2)
+  })
+
+  // ── HTML paste without <th> / direct cell-type corruption ────────────────
+  // Directly corrupt a valid table by changing a header cell to a body cell,
+  // then verify the invariant plugin repairs it before the next serialisation.
+  it('direct cell-type corruption: row-0 tableCell gets promoted to tableHeader', () => {
+    editor = createTestEditor(TABLE_2X2)
+    const { schema } = editor.state
+
+    // Find the first cell in row 0 (which is a tableHeader)
+    let headerCellPos: number | null = null
+    editor.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'table') {
+        const tableStart = pos + 1
+        node.forEach((rowNode, rowOffset) => {
+          const rowPos = tableStart + rowOffset
+          if (headerCellPos === null) {
+            rowNode.forEach((_cellNode, cellOffset) => {
+              if (headerCellPos === null) {
+                // row 0, first cell
+                headerCellPos = rowPos + 1 + cellOffset
+              }
+            })
+          }
+        })
+        return false
+      }
+      return true
+    })
+    expect(headerCellPos).not.toBeNull()
+
+    // Corrupt it: change from tableHeader to tableCell
+    const corruptingTr = editor.state.tr.setNodeMarkup(
+      headerCellPos!,
+      schema.nodes.tableCell,
+      {},
+    )
+    corruptingTr.setMeta('addToHistory', false)
+    editor.view.dispatch(corruptingTr)
+
+    // After dispatch the appendTransaction should have fired and fixed it.
+    // Serialise and verify.
+    const md = getMarkdown(editor)
+    expect(isGfmTable(md)).toBe(true)
+    expect(md).not.toContain('[table]')
+  })
+
+  // ── Two tables in one doc ──────────────────────────────────────────────────
+  it('two tables both normalised correctly', () => {
+    const twoTables = TABLE_2X2 + '\n\n' + TABLE_3X3
+    editor = createTestEditor(twoTables)
+    const md = getMarkdown(editor)
+    // Both tables should be GFM-serialisable — no [table] fallback
+    expect(md).not.toContain('[table]')
+    // Both separator rows present
+    const pipeCount = (md.match(/\|/g) ?? []).length
+    expect(pipeCount).toBeGreaterThan(10) // 2x2 + 3x3 gives many pipes
+  })
+
+  // ── Idempotency: valid table produces no appended transaction ──────────────
+  // A doc that is already valid must not produce a fixing transaction,
+  // because that would mean the plugin appends infinite fixing transactions.
+  // We verify this by dispatching a no-op (text insertion in a paragraph)
+  // and confirming the table node object is the same reference before and after.
+  it('a valid table: plugin appends no fixing transaction (table node identity)', () => {
+    // Prepend a paragraph so we can insert text there without touching the table
+    const docWithParagraph = 'Some text\n\n' + TABLE_2X2
+    editor = createTestEditor(docWithParagraph)
+
+    // Find the table node before the no-op dispatch
+    let tableBefore: ReturnType<typeof editor.state.doc.nodeAt> = null
+    editor.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'table') {
+        tableBefore = editor.state.doc.nodeAt(pos)
+        return false
+      }
+      return true
+    })
+    expect(tableBefore).not.toBeNull()
+
+    // Dispatch a text change in the paragraph (not the table)
+    // Position 1 is inside the first paragraph.
+    const { tr } = editor.state
+    tr.insertText('!', 1)
+    editor.view.dispatch(tr)
+
+    // Find the table node after
+    let tableAfter: ReturnType<typeof editor.state.doc.nodeAt> = null
+    editor.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'table') {
+        tableAfter = editor.state.doc.nodeAt(pos)
+        return false
+      }
+      return true
+    })
+
+    // Same object reference → plugin did NOT rebuild the table (no fixing tr)
+    expect(tableAfter).toBe(tableBefore)
+  })
+})
+

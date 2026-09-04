@@ -56,21 +56,12 @@ import {
   forwardRef,
 } from 'react'
 import { useEditor, EditorContent } from '@tiptap/react'
-import StarterKit from '@tiptap/starter-kit'
-import { Table } from '@tiptap/extension-table'
-import { TableRow } from '@tiptap/extension-table-row'
-import { TableCell } from '@tiptap/extension-table-cell'
-import { TableHeader } from '@tiptap/extension-table-header'
-import { TaskList } from '@tiptap/extension-task-list'
-import { TaskItem } from '@tiptap/extension-task-item'
-import { Link } from '@tiptap/extension-link'
-import Image from '@tiptap/extension-image'
 import Placeholder from '@tiptap/extension-placeholder'
-import { Markdown } from 'tiptap-markdown'
 import type { MarkdownStorage } from 'tiptap-markdown'
 import type { Editor } from '@tiptap/core'
 import { cn } from '@/lib/utils'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { buildCoreExtensions } from './coreExtensions'
 
 // Submodules
 import { buildSlashExtension, SlashMenuPortal } from './extensions/slashCommand'
@@ -171,19 +162,17 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
     const openImageRef = useRef<(() => void) | null>(null)
     const openTableRef = useRef<(() => void) | null>(null)
 
-    // ── Prop refs — read inside extension callbacks so extensions are stable ─
-    // readOnly: consumed by Link.configure(openOnClick) but we apply it via
-    //           editor.setEditable() in a useEffect instead, so the extension
-    //           config never needs to change.
-    // placeholder: TipTap's Placeholder extension reads it via extension.options
-    //              which can be updated after mount; we hold a ref and apply
-    //              updates via editor.extensionManager where needed.
-    //              For now both are kept OUT of the useMemo deps so the editor
-    //              is never recreated when readOnly/placeholder change.
-    const readOnlyRef = useRef(readOnly)
+    // ── Prop ref — read inside Placeholder callback so live updates work ─────
+    // placeholder: Placeholder.configure accepts a function, so we pass
+    //   () => placeholderRef.current — any re-render with a new placeholder
+    //   prop updates the ref (via the layout effect below) and the next
+    //   ProseMirror decoration cycle reads the new value automatically.
+    //   readOnly is NOT kept in a ref here — it is applied via setEditable()
+    //   in its own useEffect and the Link extension uses openOnClick: false
+    //   (constant) because TipTap's built-in editable check already prevents
+    //   link clicks when the view is not editable.
     const placeholderRef = useRef(placeholder)
-    // Keep refs in sync (layout effect = before paint, same as the value sync)
-    useLayoutEffect(() => { readOnlyRef.current = readOnly })
+    // Keep ref in sync before paint so the next decoration cycle sees the update.
     useLayoutEffect(() => { placeholderRef.current = placeholder })
 
     // ── Stable extensions ──────────────────────────────────────────────────
@@ -197,62 +186,13 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
 
     const extensions = useMemo(
       () => [
-        StarterKit.configure({
-          undoRedo: { depth: 200 },
-          codeBlock: { HTMLAttributes: { class: 'wysiwyg-code-block' } },
-          link: false,
-        }),
-        Table.configure({ resizable: false }),
-        TableRow,
-        TableCell,
-        TableHeader,
-        TaskList.configure({
-          HTMLAttributes: { class: 'wysiwyg-task-list' },
-        }),
-        TaskItem.configure({ nested: true }),
-        Link.configure({
-          // openOnClick: links open on click only in readOnly mode.
-          // We deliberately pin this to the mount-time value (readOnlyRef.current)
-          // rather than re-creating the editor when readOnly changes.
-          // TipTap's Link extension does not expose a runtime API to update
-          // openOnClick after mount; rebuilding extensions on readOnly toggle
-          // would destroy undo history and lose the current selection, which is
-          // worse than the alternative.
-          // In practice: VME always mounts WysiwygEditor with readOnly=false;
-          // the readOnly path is only used in potential future embed scenarios.
-          openOnClick: readOnlyRef.current,
-          // autolink: typing "https://example.com " auto-converts the URL to a
-          // link mark; linkOnPaste: pasting a URL over a selection links it.
-          // Both are safe to enable alongside tiptap-markdown because the
-          // serialiser round-trips any link mark back to [text](href) form.
-          // NOTE: Markdown.configure({ linkify: false }) is intentionally kept
-          // false — we do NOT want the parser to re-linkify plain-text URLs on
-          // every parse pass (that would silently mutate the user's source).
-          autolink: true,
-          linkOnPaste: true,
-          HTMLAttributes: {
-            class: 'wysiwyg-link',
-            rel: 'noopener noreferrer',
-            target: '_blank',
-          },
-        }),
-        Image.configure({
-          // allowBase64: true so that data-URI images inserted via file-drop
-          // or paste are parsed back correctly on the next setContent call.
-          // With allowBase64: false (the default), parseHTML filters out
-          // img[src^="data:"] nodes, silently deleting them on round-trip.
-          allowBase64: true,
-          HTMLAttributes: { class: 'wysiwyg-image max-w-full rounded' },
-        }),
-        Placeholder.configure({ placeholder: placeholderRef.current }),
-        Markdown.configure({
-          html: false,
-          tightLists: true,
-          linkify: false,
-          breaks: false,
-          transformPastedText: true,
-          transformCopiedText: false,
-        }),
+        // Core serialisation extensions (shared with testUtils via coreExtensions.ts).
+        // Includes tableInvariantExtension which enforces the GFM header-row rule.
+        ...buildCoreExtensions(),
+        // Placeholder accepts a function so placeholder prop changes are live:
+        // the closure always reads placeholderRef.current, updated each render.
+        Placeholder.configure({ placeholder: () => placeholderRef.current }),
+        // Ref/UI-dependent extensions appended after core:
         linkKeyboardExtension,
         widgetFormExtension,
         tableControlsExtension,
@@ -260,7 +200,7 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
       ],
       // Only rebuild extensions when `minimal` changes (which changes the
       // structural extension array). readOnly and placeholder are consumed via
-      // refs and applied as side-effects (editor.setEditable, extension options)
+      // refs and applied as side-effects (editor.setEditable, Placeholder fn)
       // so they must NOT be in this dep array — rebuilding on readOnly/placeholder
       // change would destroy and recreate the editor, wiping undo history and
       // losing the current selection.

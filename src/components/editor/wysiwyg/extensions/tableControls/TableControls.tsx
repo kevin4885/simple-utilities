@@ -311,13 +311,13 @@ export function TableControls({ editor }: TableControlsProps) {
   // ── Deferred action helpers (use snapshotted indices) ───────────────────────
   function handleRowAction(action: () => void) {
     setRowMenuOpen(false)
-    setDropdownOpen(editor, colMenuOpen)
+    // setDropdownOpen is handled by handleRowOpenChange via onOpenChange(false)
     setTimeout(() => { editor.view.focus(); action() }, 0)
   }
 
   function handleColAction(action: () => void) {
     setColMenuOpen(false)
-    setDropdownOpen(editor, rowMenuOpen)
+    // setDropdownOpen is handled by handleColOpenChange via onOpenChange(false)
     setTimeout(() => { editor.view.focus(); action() }, 0)
   }
 

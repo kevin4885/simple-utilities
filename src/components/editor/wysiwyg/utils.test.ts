@@ -128,6 +128,14 @@ describe('sanitizeImageSrc', () => {
     expect(sanitizeImageSrc('vbscript:msgbox(1)')).toBe('')
   })
 
+  it('rejects data:text/html (not an image)', () => {
+    expect(sanitizeImageSrc('data:text/html,<script>alert(1)</script>')).toBe('')
+  })
+
+  it('rejects data:application/javascript', () => {
+    expect(sanitizeImageSrc('data:application/javascript,alert(1)')).toBe('')
+  })
+
   it('passes data:image/* through unchanged', () => {
     const dataUri = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQ=='
     expect(sanitizeImageSrc(dataUri)).toBe(dataUri)
@@ -138,12 +146,26 @@ describe('sanitizeImageSrc', () => {
     expect(sanitizeImageSrc(jpeg)).toBe(jpeg)
   })
 
+  it('passes blob: URLs through unchanged', () => {
+    const blobUrl = 'blob:https://example.com/1234-5678'
+    expect(sanitizeImageSrc(blobUrl)).toBe(blobUrl)
+  })
+
   it('passes https:// URL through unchanged', () => {
     expect(sanitizeImageSrc('https://example.com/cat.jpg')).toBe('https://example.com/cat.jpg')
   })
 
   it('prepends https:// to bare domain image URLs', () => {
     expect(sanitizeImageSrc('example.com/image.png')).toBe('https://example.com/image.png')
+  })
+
+  it('passes relative paths through (normalizeUrl returns them unchanged)', () => {
+    expect(sanitizeImageSrc('/images/cat.png')).toBe('/images/cat.png')
+    expect(sanitizeImageSrc('./cat.png')).toBe('./cat.png')
+  })
+
+  it('passes #anchor through (normalizeUrl returns it unchanged)', () => {
+    expect(sanitizeImageSrc('#logo')).toBe('#logo')
   })
 })
 

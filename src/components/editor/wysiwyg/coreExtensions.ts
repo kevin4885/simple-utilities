@@ -6,8 +6,9 @@
  * import from here, so there is no risk of the two lists diverging.
  *
  * "Core" = every extension that affects how markdown is parsed or serialised,
- * plus the tableInvariant plugin that enforces the GFM header-row invariant.
- * It deliberately excludes extensions that depend on React refs or UI state:
+ * plus the tableInvariant plugin that enforces the GFM table structure
+ * invariants (cell types + single-paragraph cells). It deliberately excludes
+ * extensions that depend on React refs or UI state:
  *   • Placeholder      — needs a ref for live-update support
  *   • slashCommand     — needs setMenuRef / slashHandleRef / opener refs
  *   • linkKeyboard     — needs openLinkRef
@@ -37,21 +38,16 @@ import { Markdown } from 'tiptap-markdown'
 import { tableInvariantExtension } from './extensions/tableInvariant'
 import type { Extensions } from '@tiptap/core'
 
-export interface BuildCoreExtensionsOpts {
-  /**
-   * Enables base64 image support (allowBase64: true on the Image extension).
-   * Required so data-URI images survive the parse → serialise round-trip.
-   * Defaults to true (matches the production component).
-   */
-  allowBase64?: boolean
-}
-
 /**
  * Returns the core extension array used by WysiwygEditor for parsing and
  * serialisation. Append only ref/UI-dependent extensions on top of this.
+ *
+ * allowBase64 is always true (the production constant) — data-URI images must
+ * survive the parse → serialise round-trip. The option has been removed because
+ * it was never set to false anywhere; a constant is simpler than a configurable
+ * default.
  */
-export function buildCoreExtensions(opts: BuildCoreExtensionsOpts = {}): Extensions {
-  const { allowBase64 = true } = opts
+export function buildCoreExtensions(): Extensions {
   return [
     StarterKit.configure({
       undoRedo: { depth: 200 },
@@ -77,7 +73,7 @@ export function buildCoreExtensions(opts: BuildCoreExtensionsOpts = {}): Extensi
       },
     }),
     Image.configure({
-      allowBase64,
+      allowBase64: true,
       HTMLAttributes: { class: 'wysiwyg-image max-w-full rounded' },
     }),
     Markdown.configure({

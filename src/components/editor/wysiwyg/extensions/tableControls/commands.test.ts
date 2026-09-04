@@ -8,17 +8,16 @@
  *   - moveColumn reorders columns correctly
  *   - move operations disabled when table has span > 1
  *   - isRectangularTable reports correctly
+ *
+ * All tests use createTestEditor() from testUtils so the editor config
+ * exactly matches WysiwygEditor (including tableInvariantExtension, allowBase64,
+ * Markdown options). No test may hand-roll its own extension array.
  */
 
 import { describe, it, expect, afterEach } from 'vitest'
-import { Editor } from '@tiptap/core'
-import StarterKit from '@tiptap/starter-kit'
-import { Table } from '@tiptap/extension-table'
-import { TableRow } from '@tiptap/extension-table-row'
-import { TableCell } from '@tiptap/extension-table-cell'
-import { TableHeader } from '@tiptap/extension-table-header'
-import { Markdown } from 'tiptap-markdown'
 import { CellSelection } from '@tiptap/pm/tables'
+import { createTestEditor, getMarkdown } from '../../testUtils'
+import type { Editor } from '@tiptap/core'
 import {
   selectRow,
   selectColumn,
@@ -29,22 +28,8 @@ import {
 } from './commands'
 
 // ---------------------------------------------------------------------------
-// Editor factory
+// Helpers
 // ---------------------------------------------------------------------------
-
-function makeEditor(content: string): Editor {
-  return new Editor({
-    extensions: [
-      StarterKit,
-      Table.configure({ resizable: false }),
-      TableRow,
-      TableCell,
-      TableHeader,
-      Markdown.configure({ html: false }),
-    ],
-    content,
-  })
-}
 
 const TABLE_3X3 = `
 | A | B | C |
@@ -52,16 +37,6 @@ const TABLE_3X3 = `
 | 1 | 2 | 3 |
 | 4 | 5 | 6 |
 `.trim()
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function getMarkdown(editor: Editor): string {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const storage = editor.storage as Record<string, any>
-  return (storage.markdown?.getMarkdown?.() as string | undefined) ?? ''
-}
 
 function editorTablePos(editor: Editor): number {
   const pos = getEditorTablePos(editor)
@@ -79,7 +54,7 @@ describe('selectRow', () => {
   afterEach(() => { editor?.destroy() })
 
   it('selects the first row (row 0) — CellSelection.isRowSelection', () => {
-    editor = makeEditor(TABLE_3X3)
+    editor = createTestEditor(TABLE_3X3)
     // Place cursor inside the table first (first cell)
     const tablePos = editorTablePos(editor)
     const result = selectRow(editor, tablePos, 0)
@@ -90,7 +65,7 @@ describe('selectRow', () => {
   })
 
   it('selects the second row (row 1)', () => {
-    editor = makeEditor(TABLE_3X3)
+    editor = createTestEditor(TABLE_3X3)
     const tablePos = editorTablePos(editor)
     selectRow(editor, tablePos, 1)
     const sel = editor.state.selection as CellSelection
@@ -98,7 +73,7 @@ describe('selectRow', () => {
   })
 
   it('returns false for out-of-range row', () => {
-    editor = makeEditor(TABLE_3X3)
+    editor = createTestEditor(TABLE_3X3)
     const tablePos = editorTablePos(editor)
     const result = selectRow(editor, tablePos, 99)
     expect(result).toBe(false)
@@ -115,7 +90,7 @@ describe('selectColumn', () => {
   afterEach(() => { editor?.destroy() })
 
   it('selects first column (col 0) — CellSelection.isColSelection', () => {
-    editor = makeEditor(TABLE_3X3)
+    editor = createTestEditor(TABLE_3X3)
     const tablePos = editorTablePos(editor)
     const result = selectColumn(editor, tablePos, 0)
     expect(result).toBe(true)
@@ -124,7 +99,7 @@ describe('selectColumn', () => {
   })
 
   it('selects third column (col 2)', () => {
-    editor = makeEditor(TABLE_3X3)
+    editor = createTestEditor(TABLE_3X3)
     const tablePos = editorTablePos(editor)
     selectColumn(editor, tablePos, 2)
     const sel = editor.state.selection as CellSelection
@@ -132,7 +107,7 @@ describe('selectColumn', () => {
   })
 
   it('returns false for out-of-range column', () => {
-    editor = makeEditor(TABLE_3X3)
+    editor = createTestEditor(TABLE_3X3)
     const tablePos = editorTablePos(editor)
     const result = selectColumn(editor, tablePos, 99)
     expect(result).toBe(false)
@@ -149,7 +124,7 @@ describe('isRectangularTable', () => {
   afterEach(() => { editor?.destroy() })
 
   it('returns true for a standard GFM table', () => {
-    editor = makeEditor(TABLE_3X3)
+    editor = createTestEditor(TABLE_3X3)
     const tablePos = editorTablePos(editor)
     expect(isRectangularTable(editor, tablePos)).toBe(true)
   })
@@ -165,7 +140,7 @@ describe('moveRow', () => {
   afterEach(() => { editor?.destroy() })
 
   it('moves row 1 to row 2 (last row)', () => {
-    editor = makeEditor(TABLE_3X3)
+    editor = createTestEditor(TABLE_3X3)
     const tablePos = editorTablePos(editor)
 
     // Row order before: header(A,B,C), row1(1,2,3), row2(4,5,6)
@@ -183,7 +158,7 @@ describe('moveRow', () => {
   })
 
   it('moves row 2 to row 1 (up)', () => {
-    editor = makeEditor(TABLE_3X3)
+    editor = createTestEditor(TABLE_3X3)
     const tablePos = editorTablePos(editor)
 
     const result = moveRow(editor, tablePos, 2, 1)
@@ -196,13 +171,13 @@ describe('moveRow', () => {
   })
 
   it('returns false for same from/to', () => {
-    editor = makeEditor(TABLE_3X3)
+    editor = createTestEditor(TABLE_3X3)
     const tablePos = editorTablePos(editor)
     expect(moveRow(editor, tablePos, 1, 1)).toBe(false)
   })
 
   it('returns false for out-of-range row', () => {
-    editor = makeEditor(TABLE_3X3)
+    editor = createTestEditor(TABLE_3X3)
     const tablePos = editorTablePos(editor)
     expect(moveRow(editor, tablePos, 1, 99)).toBe(false)
   })
@@ -218,7 +193,7 @@ describe('moveColumn', () => {
   afterEach(() => { editor?.destroy() })
 
   it('moves column 0 to column 2', () => {
-    editor = makeEditor(TABLE_3X3)
+    editor = createTestEditor(TABLE_3X3)
     const tablePos = editorTablePos(editor)
 
     const result = moveColumn(editor, tablePos, 0, 2)
@@ -233,7 +208,7 @@ describe('moveColumn', () => {
   })
 
   it('moves column 2 to column 0', () => {
-    editor = makeEditor(TABLE_3X3)
+    editor = createTestEditor(TABLE_3X3)
     const tablePos = editorTablePos(editor)
 
     const result = moveColumn(editor, tablePos, 2, 0)
@@ -247,7 +222,7 @@ describe('moveColumn', () => {
   })
 
   it('returns false for same from/to', () => {
-    editor = makeEditor(TABLE_3X3)
+    editor = createTestEditor(TABLE_3X3)
     const tablePos = editorTablePos(editor)
     expect(moveColumn(editor, tablePos, 0, 0)).toBe(false)
   })

@@ -4,9 +4,13 @@
  * Component-level integration tests for WysiwygEditor.
  *
  * Tests:
- *   1. Extension superset: WysiwygEditor's extension list is a strict superset
- *      of buildCoreExtensions() names (Blocking 2 guard — prevents coreExtensions
- *      from drifting away from the component).
+ *   1. Extension superset: renders <WysiwygEditor>, gets the live TipTap editor
+ *      from the .ProseMirror element, and asserts that the extension list is a
+ *      strict superset of buildCoreExtensions() names. This is a real runtime
+ *      check — it catches the case where buildCoreExtensions() and WysiwygEditor
+ *      drift apart even though WysiwygEditor spreads ...buildCoreExtensions() in
+ *      its useMemo (which it always does — the test proves the spread is still
+ *      there after future refactors).
  *   2. editor.setEditable(!readOnly) is applied when readOnly prop changes.
  *   3. Placeholder function: rerender with new placeholder prop updates the
  *      data-placeholder attribute on the empty paragraph.
@@ -16,36 +20,54 @@ import { describe, it, expect } from 'vitest'
 import { render, act } from '@testing-library/react'
 import WysiwygEditor from './WysiwygEditor'
 import { buildCoreExtensions } from './coreExtensions'
-import type { AnyExtension } from '@tiptap/core'
+import type { Editor } from '@tiptap/core'
 
 // ---------------------------------------------------------------------------
-// 1. Extension superset assertion (Blocking 2)
+// 1. Extension superset assertion (Blocking 2) — real component render
 // ---------------------------------------------------------------------------
 
 describe('WysiwygEditor extension superset of buildCoreExtensions()', () => {
-  it('all coreExtension names appear in the extension array', () => {
-    // This is a smoke test of buildCoreExtensions() to catch config drift early.
-    // WysiwygEditor spreads ...buildCoreExtensions() in its useMemo so every
-    // name here is guaranteed to be in the component extensions by construction.
-    const coreExts = buildCoreExtensions()
+  it('live editor extension names ⊇ buildCoreExtensions() names', async () => {
+    const { container, unmount } = render(
+      <WysiwygEditor value="# Hello" />,
+    )
 
-    function extName(e: AnyExtension | unknown): string | undefined {
-      // TipTap extensions have a `.name` property on the instance
-      return (e as AnyExtension)?.name
+    // Allow the editor to mount and initialise
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)) })
+
+    // Get the TipTap editor instance from the ProseMirror DOM element
+    const pm = container.querySelector('.ProseMirror') as HTMLElement | null
+    expect(pm).toBeTruthy()
+    // TipTap attaches the editor instance to the .ProseMirror element
+    const editor = (pm as unknown as { editor?: Editor }).editor
+    expect(editor).toBeTruthy()
+    expect(editor!.isDestroyed).toBe(false)
+
+    const coreExtensions = buildCoreExtensions()
+    const coreNames = coreExtensions
+      .map((e) => (e as { name?: string }).name)
+      .filter((n): n is string => Boolean(n))
+
+    const editorNames = editor!.extensionManager.extensions.map((e) => e.name)
+
+    // Sanity: coreExtensions has more than 5 items
+    expect(coreNames.length).toBeGreaterThan(5)
+
+    // Every core extension name must appear in the live editor's extension list
+    for (const name of coreNames) {
+      expect(editorNames).toContain(name)
     }
 
-    const coreNames = coreExts.map(extName).filter(Boolean) as string[]
+    // Critical GFM invariant extensions explicitly asserted
+    expect(editorNames).toContain('tableInvariant')
+    expect(editorNames).toContain('table')
+    expect(editorNames).toContain('tableHeader')
+    expect(editorNames).toContain('tableCell')
+    expect(editorNames).toContain('link')
+    expect(editorNames).toContain('image')
+    expect(editorNames).toContain('markdown')
 
-    // Sanity: we have more than 5 extensions
-    expect(coreNames.length).toBeGreaterThan(5)
-    // Critical GFM invariant extensions must be present
-    expect(coreNames).toContain('tableInvariant')
-    expect(coreNames).toContain('table')
-    expect(coreNames).toContain('tableHeader')
-    expect(coreNames).toContain('tableCell')
-    expect(coreNames).toContain('link')
-    expect(coreNames).toContain('image')
-    expect(coreNames).toContain('markdown')
+    unmount()
   })
 })
 

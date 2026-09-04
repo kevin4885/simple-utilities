@@ -532,6 +532,14 @@ export default function VisualMarkdownEditorPage() {
   // Inactivity auto-version timer
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Reset mobile sheet when rotating to desktop — avoids the sheet
+  // re-opening after: phone portrait → sheet open → rotate to desktop →
+  // rotate back to portrait. isDesktop is an external media-query state;
+  // resetting mobileDocsOpen when it flips true is legitimate synchronisation.
+  useEffect(() => {
+    if (isDesktop) setMobileDocsOpen(false) // eslint-disable-line react-hooks/set-state-in-effect
+  }, [isDesktop])
+
   useEffect(() => {
     return () => {
       if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current)

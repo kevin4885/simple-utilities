@@ -60,7 +60,7 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
 import { tableControlsKey, setDropdownOpen } from './plugin'
-import type { TableControlsState } from './plugin'
+import type { TableControlsState, TableControlsMeta } from './plugin'
 import {
   selectRow,
   selectColumn,
@@ -243,6 +243,18 @@ export function TableControls({ editor }: TableControlsProps) {
         setRowMenuTarget(rowIdx)
         selectRow(editor, tp, rowIdx)
       }
+      // When the menu closes and the pointer is no longer over the editor,
+      // clear the hover state so the row/column handles don't stay visible
+      // after the menu dismisses with the mouse outside the editor.
+      if (!o && !editor.view.dom.matches(':hover')) {
+        editor.view.dispatch(
+          editor.view.state.tr.setMeta(tableControlsKey, {
+            type: 'hover',
+            rowIdx: null,
+            colIdx: null,
+          } satisfies TableControlsMeta),
+        )
+      }
     },
     [editor, overlay.plugin, colMenuOpen],
   )
@@ -256,6 +268,16 @@ export function TableControls({ editor }: TableControlsProps) {
       if (o && tp != null && colIdx != null) {
         setColMenuTarget(colIdx)
         selectColumn(editor, tp, colIdx)
+      }
+      // Same hover-clear on close when pointer is outside the editor.
+      if (!o && !editor.view.dom.matches(':hover')) {
+        editor.view.dispatch(
+          editor.view.state.tr.setMeta(tableControlsKey, {
+            type: 'hover',
+            rowIdx: null,
+            colIdx: null,
+          } satisfies TableControlsMeta),
+        )
       }
     },
     [editor, overlay.plugin, rowMenuOpen],

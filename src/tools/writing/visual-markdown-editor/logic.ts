@@ -138,6 +138,8 @@ export const KEYBOARD_SHORTCUTS: ShortcutEntry[] = [
   { category: 'Links',      keys: 'Ctrl+Shift+K',             description: 'Remove link (unlink)' },
   // ── Tables ──────────────────────────────────────────────────────────────
   { category: 'Tables',     keys: 'Tab',                       description: 'Move to next cell (adds row at last cell)' },
+  { category: 'Tables',     keys: 'Enter',                     description: 'Move to cell below (adds row when in last row)' },
+  { category: 'Tables',     keys: 'Shift+Enter',               description: 'No-op in a table cell (GFM cells cannot contain line breaks; hardBreak prevented by priority:1000 keymap guard)' },
   { category: 'Tables',     keys: 'Ctrl+Enter',                description: 'Add row below' },
   { category: 'Tables',     keys: 'Ctrl+Shift+Enter',          description: 'Add row above' },
   { category: 'Tables',     keys: 'Ctrl+Alt+→',               description: 'Add column after' },

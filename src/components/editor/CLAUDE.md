@@ -411,7 +411,7 @@ round-trip. Use a raw HTML `<img>` embed if you need sized images.
 - Choose dimensions by hovering/clicking or arrow keys + Enter
 - Tables are always inserted with `withHeaderRow: true` — no checkbox
 
-Tab / Shift-Tab move between cells; Tab on last cell of last row adds a row.
+Tab / Shift-Tab move between cells; Tab on last cell of last row adds a row. Enter moves to the cell below (same column, next row); on the last row it adds a new row first. Shift-Enter is a no-op in table cells (hard breaks in cells break tiptap-markdown serialisation).
 
 **Hover controls (Phase 3 — see tableControls section below):**
 - Row handle pill (left edge of hovered row): insert above/below, move up/down, delete row *(disabled on header row)*, delete table.
@@ -421,6 +421,7 @@ Tab / Shift-Tab move between cells; Tab on last cell of last row adds a row.
 - Focused table gets a subtle ring outline (`wysiwyg-table-focused` decoration class).
 
 **Keyboard shortcuts** (via `linkKeyboard` extension):
+`Enter` (move to cell below / add row), `Shift-Enter` (no-op in cell — hard breaks break serialisation; `linkKeyboard` priority:1000 pre-empts StarterKit's HardBreak so no hardBreak node is ever inserted in a cell),
 `Ctrl+Enter` (add row after), `Ctrl+Shift+Enter` (add row before),
 `Ctrl+Alt+→/←` (add col after/before), `Ctrl+Alt+Backspace` (delete row).
 
@@ -505,6 +506,7 @@ interface TableControlsState {
 4. **React overlay** (TableControls.tsx): subscribed to editor transaction events; re-measures rects on scroll/resize. Renders handle pills and edge "+" buttons using absolute positioning inside wysiwyg-root. Uses `getScrollParent(editor.view.dom)` (from `utils.ts`) to find the nearest scrollable ancestor — not `closest('.overflow-y-auto')` which was coupled to Tailwind class names.
 5. **Dropdown blur guard**: all handle buttons use onMouseDown={e=>e.preventDefault()} to prevent editor blur. Menus use onCloseAutoFocus to refocus the editor.
 6. **Dropdown-open freeze**: setDropdownOpen(true) is called when a row/col menu opens, so the mousemove handler ignores events while a menu is displayed.
+7. **Hover-persist fix**: when a menu closes (`onOpenChange(false)`) and the pointer is not over the editor DOM (`!editor.view.dom.matches(':hover')`), the hover-clear meta is dispatched immediately. This handles the case where the Radix dropdown portal is outside the editor DOM — the pointer never re-enters, so mousemove never fires to clear hover organically. **Manual-check note**: verified visually — no unit test because the fix depends on real pointer coordinates and DOM layout (`:hover` pseudo-class is not testable in jsdom).
 
 ### Handles
 
@@ -610,12 +612,23 @@ import { WysiwygErrorBoundary } from '@/components/editor/wysiwyg/WysiwygErrorBo
 GFM tables always have exactly one header row (row 0 = all `tableHeader` nodes; rows 1+ = all `tableCell` nodes). tiptap-markdown's `isMarkdownSerializable` check enforces this. Violated tables fall back to the HTML serialiser which, with `html: false`, emits `[table]`.
 
 **Document-level enforcement (primary defence):**
-`extensions/tableInvariant.ts` — a `tableInvariantExtension` ProseMirror plugin with `appendTransaction`. On any doc-changing transaction it walks all table nodes, collects cells with the wrong type (header in body row, cell in header row), and returns a single fixing transaction via `setNodeMarkup`. The fix is marked `addToHistory: false`. The plugin is idempotent: after one fix the next appendTransaction pass finds no violations and returns `null`.
+`extensions/tableInvariant.ts` — a `tableInvariantExtension` ProseMirror plugin with `appendTransaction`. On any doc-changing transaction it walks all table nodes and repairs three classes of violations:
 
-This means:
-- `Mod-Shift-Enter` (addRowBefore) on the header row is **safe** — the new row is normalised to header, old header becomes body.
-- `Mod-Alt-Backspace` (deleteRow) on the header row is **safe** — the surviving first row is promoted to header.
-- Any future command or HTML paste that produces a cell-type violation is silently corrected.
+1. **Cell-type violations**: cells with the wrong type (header in body row, cell in header row) are fixed via `setNodeMarkup`.
+2. **Cell-content violations**: every cell must contain exactly one `paragraph` child. Cells with `childCount !== 1` or a non-paragraph first child are normalised:
+   - Multiple children (e.g. two paragraphs from a splitBlock/Enter-in-cell): text joined with a single space into one paragraph. Inline marks lost — acceptable; prevents `[table]` content loss.
+   - Single non-paragraph child (list, heading pasted in): flattened to a paragraph containing the cell's plain `textContent`. Inline marks lost — acceptable fallback.
+   - Empty cell: an empty paragraph is inserted.
+3. **hardBreak violations**: any `hardBreak` node inside a cell paragraph is replaced with a single space text node. This closes the HTML paste path (`<td>x<br>y</td>` → paragraph with a `hardBreak` inline) — tiptap-markdown cannot serialise a `hardBreak` inside a GFM cell and would emit the literal `[hardBreak]`.
+
+All fixes are marked `addToHistory: false`. The plugin is idempotent: after one fix the next pass finds no violations and returns `null`.
+
+**What the invariant does NOT cover:**
+- `colspan`/`rowspan` > 1: not reachable from the UI (GFM has no span syntax; `mergeCells` is not exposed). `isRectangularTable()` still gates Move row/column.
+- Content arriving via `setContent` is repaired on the next doc-changing transaction. The Markdown parser never produces invalid tables, so only direct ProseMirror manipulation is affected.
+
+**Keymap priority — `linkKeyboard` extension (`priority: 1000`):**
+StarterKit's HardBreak extension (default priority 100) also binds `Shift-Enter`. TipTap registers extension keymaps in descending priority order, so `linkKeyboard` (priority 1000) runs first. Inside a table cell, the `Shift-Enter` handler returns `true` (no-op), consuming the event before HardBreak can insert a `hardBreak` node. Outside a table cell the handler returns `false`, so HardBreak still fires normally everywhere else. The `priority: 1000` field is set on the `Extension.create(…)` in `extensions/linkKeyboard.ts`.
 
 **UX guards (secondary defence — convenience, not correctness):**
 - Tables are **always inserted with `withHeaderRow: true`** — the "Header row" checkbox has been removed from `TableForm`.
@@ -640,16 +653,18 @@ The module-level `_dropdownOpen` flag has been replaced with `menuOpen: boolean`
 
 ### testUtils (`wysiwyg/testUtils.ts`) and coreExtensions (`wysiwyg/coreExtensions.ts`)
 
-`wysiwyg/coreExtensions.ts` is the **single source of truth** for all serialisation-relevant extensions. It exports `buildCoreExtensions(opts?)` which is imported by:
+`wysiwyg/coreExtensions.ts` is the **single source of truth** for all serialisation-relevant extensions. It exports `buildCoreExtensions()` (no options — `allowBase64` is always `true` and is a constant) which is imported by:
 - `WysiwygEditor.tsx` — spread into the `useMemo` extensions array (+ ref/UI-dependent extensions appended after)
 - `testUtils.ts` — used by `createTestEditor` so test editor configs can never diverge from production
 
 `wysiwyg/testUtils.ts` re-exports `buildCoreExtensions` and adds headless test helpers:
-- `buildCoreExtensions(opts?)` — re-exported from `coreExtensions.ts`
+- `buildCoreExtensions()` — re-exported from `coreExtensions.ts`
 - `createTestEditor(markdown)` — headless `Editor` with that config, pre-loaded with `markdown`
 - `getMarkdown(editor)` — serialises via tiptap-markdown storage
 
-**All new tests that need a headless editor MUST use `createTestEditor`** — not hand-rolled extension arrays that can silently diverge from the component config.
+**Canonical import path for tests:** always import from `./testUtils` (or the relative equivalent). Never import `buildCoreExtensions` directly from `coreExtensions` in tests — use `testUtils` as the single test-layer import point.
+
+**All new tests that need a headless editor MUST use `createTestEditor`** — not hand-rolled extension arrays that can silently diverge from the component config. No test under `src/components/editor/**` may configure StarterKit/Table/Markdown/Link/Image directly.
 
 ### Split mode
 

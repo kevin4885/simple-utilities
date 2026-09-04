@@ -7,7 +7,7 @@
  *
  * Export surface
  * ──────────────
- *   buildCoreExtensions(opts)  — returns the StarterKit/Link/Image/Table/
+ *   buildCoreExtensions()      — returns the StarterKit/Link/Image/Table/
  *                                Markdown/TableInvariant extension array used
  *                                by WysiwygEditor for serialisation tests.
  *   createTestEditor(markdown) — headless Editor pre-loaded with the given
@@ -22,8 +22,13 @@
  *   All new tests that need a headless editor MUST use createTestEditor so they
  *   break if the config drifts.
  *
- *   buildCoreExtensions and BuildCoreExtensionsOpts are re-exported from
- *   coreExtensions.ts — the single source of truth shared with WysiwygEditor.tsx.
+ *   buildCoreExtensions is re-exported from coreExtensions.ts — the single
+ *   source of truth shared with WysiwygEditor.tsx.
+ *
+ * Canonical import path:
+ *   import { createTestEditor, getMarkdown, buildCoreExtensions } from './testUtils'
+ *   (or from '../../testUtils' etc. depending on depth — always use testUtils,
+ *   never import buildCoreExtensions directly from coreExtensions in tests)
  */
 
 import { Editor } from '@tiptap/core'
@@ -32,7 +37,6 @@ import { buildCoreExtensions } from './coreExtensions'
 
 // Re-export so callers that currently import from testUtils keep working.
 export { buildCoreExtensions } from './coreExtensions'
-export type { BuildCoreExtensionsOpts } from './coreExtensions'
 
 // ---------------------------------------------------------------------------
 // createTestEditor

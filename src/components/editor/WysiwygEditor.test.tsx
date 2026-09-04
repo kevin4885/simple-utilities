@@ -15,8 +15,6 @@ import { StrictMode, createRef } from 'react'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, act } from '@testing-library/react'
 import { Editor } from '@tiptap/core'
-import StarterKit from '@tiptap/starter-kit'
-import { Markdown } from 'tiptap-markdown'
 import WysiwygEditor, { type WysiwygEditorHandle } from './WysiwygEditor'
 import { createTestEditor, getMarkdown } from './wysiwyg/testUtils'
 
@@ -48,7 +46,9 @@ describe('WysiwygEditor — single instance per mount', () => {
 
 describe('WysiwygEditor lifecycle', () => {
   it('documents the TipTap behaviour: storage.markdown disappears after destroy()', () => {
-    const e = new Editor({ extensions: [StarterKit, Markdown], content: '# Hi' })
+    // Uses createTestEditor (real config) so this test is consistent with all
+    // other headless editor tests. StarterKit + Markdown hand-rolled is banned.
+    const e = createTestEditor('# Hi')
     const storage = e.storage as unknown as Record<string, { getMarkdown?: unknown } | undefined>
     expect(typeof storage.markdown?.getMarkdown).toBe('function')
     e.destroy()

@@ -79,6 +79,10 @@ Colors are **OKLCH** CSS variables defined in `src/index.css`, exposed to Tailwi
 Use semantic utility classes everywhere (`bg-background`, `text-muted-foreground`, etc.) — never hardcode raw colors.
 The full token set is the source of truth in `src/index.css`.
 
+Diff colours: use the `diff-insert` / `diff-delete` semantic tokens (`bg-diff-insert/10`,
+`text-diff-delete`, …) — never raw greens/reds. Used by the Visual Markdown Editor's version
+history diff view and the Diff Viewer tool.
+
 Theme choice is stored in localStorage under key `su:theme`.
 
 ### Dark-mode borders (`--border` vs `--input`)

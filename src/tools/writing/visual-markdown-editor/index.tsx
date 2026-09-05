@@ -17,6 +17,20 @@
  *   boundary catches, flushes pending edits, calls onError → mode switches to
  *   'markdown', and shows a brief inline notice.
  *
+ * Version history:
+ *   The store (`./store.ts`) auto-snapshots the active doc after 5 minutes of
+ *   inactivity, on doc switch, and keeps a manual "Save now" action; a
+ *   pinned "Before restore" snapshot is added automatically on restore. The
+ *   history UI lives in `./history/` and is entirely props-only (never
+ *   imports the store) — this page owns the wiring: it flushes the WYSIWYG
+ *   editor's debounced onChange (a) before opening the drawer, (b) before
+ *   "Save now", and (c) before Restore, so the diff/snapshot never lags
+ *   behind the last keystrokes; it also clears the inactivity timer on
+ *   manual Save now and Restore to avoid a redundant auto-version firing
+ *   later. Restore only writes `doc.content` in the store — it never touches
+ *   CodeMirror/TipTap internals; WysiwygEditor's external-value sync effect
+ *   and CodeEditor's `value` prop pick up the new content in every mode.
+ *
  * Keyboard shortcuts:
  *   Ctrl+Alt+P / Cmd+Alt+P — toggles between current editing mode and 'preview'
  *   (remembers previous mode to return to).
@@ -52,6 +66,7 @@ import {
   Code2,
   Columns2,
   KeyboardIcon,
+  History,
   X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -88,6 +103,7 @@ import WysiwygEditor, { type WysiwygEditorHandle } from '@/components/editor/Wys
 import CodeEditor from '@/components/editor/CodeEditor'
 import MarkdownRenderer from '@/components/editor/MarkdownRenderer'
 import { WysiwygErrorBoundary } from '@/components/editor/wysiwyg/WysiwygErrorBoundary'
+import VersionHistoryDrawer from './history/VersionHistoryDrawer'
 import {
   countTokensGpt,
   countTokensApprox,
@@ -505,6 +521,9 @@ export default function VisualMarkdownEditorPage() {
     setActiveDoc,
     setModel,
     saveVersion,
+    restoreVersion,
+    deleteVersion,
+    pinVersion,
     setEditorMode,
     dismissHint,
   } = useVmeStore()
@@ -515,6 +534,7 @@ export default function VisualMarkdownEditorPage() {
   const mode = editorMode
   const [docsOpen, setDocsOpen] = useState(true)
   const [mobileDocsOpen, setMobileDocsOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
 
   // Error state for the wysiwyg panel — declared before handleModeChange
   // (which references it) to avoid a stale-closure if it were declared later.
@@ -545,6 +565,38 @@ export default function VisualMarkdownEditorPage() {
       if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current)
     }
   }, [])
+
+  // ── Version history helpers ─────────────────────────────────────────────────
+
+  /** Flush WysiwygEditor's debounced onChange so the store has the latest markdown. */
+  function flushEditor() {
+    if (mode === 'wysiwyg') wysiwygRef.current?.flush()
+  }
+
+  function clearInactivityTimer() {
+    if (inactivityTimerRef.current) {
+      clearTimeout(inactivityTimerRef.current)
+      inactivityTimerRef.current = null
+    }
+  }
+
+  function openHistory() {
+    flushEditor()
+    setHistoryOpen(true)
+  }
+
+  function handleManualSaveVersion(): string | null {
+    flushEditor()
+    clearInactivityTimer()
+    return saveVersion(activeDoc.id, { auto: false })
+  }
+
+  function handleRestoreVersion(versionId: string) {
+    flushEditor()
+    clearInactivityTimer()
+    restoreVersion(activeDoc.id, versionId)
+    setHistoryOpen(false)
+  }
 
   // ── Content change handler ─────────────────────────────────────────────────
 
@@ -601,13 +653,11 @@ export default function VisualMarkdownEditorPage() {
       if (mode === 'wysiwyg') {
         wysiwygRef.current?.flush()
       }
-      if (inactivityTimerRef.current) {
-        clearTimeout(inactivityTimerRef.current)
-        inactivityTimerRef.current = null
-      }
+      clearInactivityTimer()
       saveVersion(activeDocId, { auto: true })
       setActiveDoc(newId)
       setMobileDocsOpen(false)
+      setHistoryOpen(false)
     },
     [activeDocId, mode, setActiveDoc, saveVersion],
   )
@@ -735,6 +785,16 @@ export default function VisualMarkdownEditorPage() {
       >
         <Download className="h-3.5 w-3.5" />
         <span className="hidden sm:inline">.md</span>
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        className={cn('h-7 w-7 shrink-0', historyOpen && 'bg-muted')}
+        onClick={openHistory}
+        title="Version history"
+        aria-label="Version history"
+      >
+        <History className="h-3.5 w-3.5" />
       </Button>
       <ShortcutsDialog />
     </div>
@@ -912,6 +972,17 @@ export default function VisualMarkdownEditorPage() {
           </Collapsible>
         )}
       </div>
+
+      {/* History drawer — mounted once, outside the mode/layout conditionals */}
+      <VersionHistoryDrawer
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        doc={activeDoc}
+        onSaveVersion={handleManualSaveVersion}
+        onRestore={handleRestoreVersion}
+        onPin={(versionId, label) => pinVersion(activeDoc.id, versionId, label)}
+        onDelete={(versionId) => deleteVersion(activeDoc.id, versionId)}
+      />
 
     </div>
   )

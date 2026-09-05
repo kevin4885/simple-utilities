@@ -218,11 +218,11 @@ function SideBySideView({ rows }: { rows: SideBySideRow[] }) {
 
             const leftClassName =
               isChanged || isDeleteOnly
-                ? 'bg-diff-delete/10 border-l-[3px] border-diff-delete/50'
+                ? 'bg-diff-delete/10 border-l-[3px] border-l-diff-delete/50'
                 : undefined
             const rightClassName =
               isChanged || isInsertOnly
-                ? 'bg-diff-insert/10 border-l-[3px] border-diff-insert/50'
+                ? 'bg-diff-insert/10 border-l-[3px] border-l-diff-insert/50'
                 : undefined
 
             return (

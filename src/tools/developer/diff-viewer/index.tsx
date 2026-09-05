@@ -22,32 +22,6 @@ import type { UnifiedRow, SideBySideRow, IntralineSpan } from './logic'
 import { useDiffViewerStore } from './store'
 import { AlertTriangle, Copy, Check, Columns2, AlignLeft, ArrowUpDown } from 'lucide-react'
 
-// ── Theme colour helpers ───────────────────────────────────────────────────────
-
-/** Row background/border for delete rows. Uses CSS color-mix like regex-tester. */
-const deleteRowStyle: React.CSSProperties = {
-  backgroundColor: 'color-mix(in oklch, var(--color-destructive) 10%, transparent)',
-  borderLeft: '3px solid color-mix(in oklch, var(--color-destructive) 50%, transparent)',
-}
-
-/** Row background/border for insert rows. */
-const insertRowStyle: React.CSSProperties = {
-  backgroundColor: 'color-mix(in oklch, oklch(0.6 0.2 145) 12%, transparent)',
-  borderLeft: '3px solid color-mix(in oklch, oklch(0.6 0.2 145) 50%, transparent)',
-}
-
-/** Intraline highlight for deleted chars. */
-const deleteSpanStyle: React.CSSProperties = {
-  backgroundColor: 'color-mix(in oklch, var(--color-destructive) 30%, transparent)',
-  borderRadius: '2px',
-}
-
-/** Intraline highlight for inserted chars. */
-const insertSpanStyle: React.CSSProperties = {
-  backgroundColor: 'color-mix(in oklch, oklch(0.6 0.2 145) 30%, transparent)',
-  borderRadius: '2px',
-}
-
 // ── IntralineText ──────────────────────────────────────────────────────────────
 
 /**
@@ -57,11 +31,11 @@ const insertSpanStyle: React.CSSProperties = {
 function IntralineText({
   text,
   spans,
-  spanStyle,
+  spanClassName,
 }: {
   text: string
   spans: IntralineSpan[]
-  spanStyle: React.CSSProperties
+  spanClassName: string
 }) {
   if (spans.length === 0) {
     return <>{text}</>
@@ -75,7 +49,7 @@ function IntralineText({
       parts.push(<span key={key++}>{text.slice(pos, span.start)}</span>)
     }
     parts.push(
-      <mark key={key++} style={spanStyle} className="text-foreground">
+      <mark key={key++} className={cn('rounded-[2px] text-foreground', spanClassName)}>
         {text.slice(span.start, span.end)}
       </mark>,
     )
@@ -144,24 +118,21 @@ function UnifiedView({ rows }: { rows: UnifiedRow[] }) {
           {rows.map((row, i) => {
             const isDelete = row.type === 'delete'
             const isInsert = row.type === 'insert'
-            const rowStyle = isDelete ? deleteRowStyle : isInsert ? insertRowStyle : undefined
-            const spanStyle = isDelete ? deleteSpanStyle : insertSpanStyle
+            const spanClassName = isDelete ? 'bg-diff-delete/30' : 'bg-diff-insert/30'
             const prefix = isDelete ? '−' : isInsert ? '+' : ' '
 
             return (
-              <tr key={i} style={rowStyle}>
+              <tr
+                key={i}
+                className={cn(
+                  isDelete && 'bg-diff-delete/10 border-l-[3px] border-l-diff-delete/50',
+                  isInsert && 'bg-diff-insert/10 border-l-[3px] border-l-diff-insert/50',
+                )}
+              >
                 {/* Prefix column */}
                 <td className="select-none w-5 text-center align-top py-0.5 font-bold">
-                  {isDelete && (
-                    <span style={{ color: 'color-mix(in oklch, var(--color-destructive) 90%, transparent)' }}>
-                      {prefix}
-                    </span>
-                  )}
-                  {isInsert && (
-                    <span style={{ color: 'color-mix(in oklch, oklch(0.6 0.2 145) 90%, transparent)' }}>
-                      {prefix}
-                    </span>
-                  )}
+                  {isDelete && <span className="text-diff-delete">{prefix}</span>}
+                  {isInsert && <span className="text-diff-insert">{prefix}</span>}
                   {!isDelete && !isInsert && (
                     <span className="text-muted-foreground">{prefix}</span>
                   )}
@@ -175,7 +146,7 @@ function UnifiedView({ rows }: { rows: UnifiedRow[] }) {
                   <IntralineText
                     text={row.text}
                     spans={row.intralineSpans}
-                    spanStyle={spanStyle}
+                    spanClassName={spanClassName}
                   />
                 </td>
               </tr>
@@ -193,20 +164,19 @@ function UnifiedView({ rows }: { rows: UnifiedRow[] }) {
 function SideCell({
   text,
   spans,
-  spanStyle,
-  rowStyle,
+  spanClassName,
+  rowClassName,
   lineNum,
 }: {
   text: string | null
   spans: IntralineSpan[]
-  spanStyle: React.CSSProperties
-  rowStyle?: React.CSSProperties
+  spanClassName: string
+  rowClassName?: string
   lineNum: number | null
 }) {
   return (
     <td
-      className="w-1/2 align-top border-r border-border last:border-r-0"
-      style={rowStyle}
+      className={cn('w-1/2 align-top border-r border-border last:border-r-0', rowClassName)}
     >
       <table className="w-full border-collapse">
         <tbody>
@@ -214,16 +184,10 @@ function SideCell({
             <Gutter lineNum={lineNum} />
             <td className="py-0.5 pl-1 pr-2 text-xs font-mono whitespace-pre-wrap break-all leading-relaxed">
               {text !== null ? (
-                <IntralineText text={text} spans={spans} spanStyle={spanStyle} />
+                <IntralineText text={text} spans={spans} spanClassName={spanClassName} />
               ) : (
                 // Placeholder gap — empty cell with muted background
-                <span
-                  style={{
-                    display: 'block',
-                    minHeight: '1.25em',
-                    backgroundColor: 'color-mix(in oklch, var(--color-muted) 40%, transparent)',
-                  }}
-                />
+                <span className="block min-h-[1.25em] bg-muted/40" />
               )}
             </td>
           </tr>
@@ -252,25 +216,29 @@ function SideBySideView({ rows }: { rows: SideBySideRow[] }) {
             const isDeleteOnly = row.type === 'delete-only'
             const isInsertOnly = row.type === 'insert-only'
 
-            const leftStyle =
-              isChanged || isDeleteOnly ? deleteRowStyle : undefined
-            const rightStyle =
-              isChanged || isInsertOnly ? insertRowStyle : undefined
+            const leftClassName =
+              isChanged || isDeleteOnly
+                ? 'bg-diff-delete/10 border-l-[3px] border-diff-delete/50'
+                : undefined
+            const rightClassName =
+              isChanged || isInsertOnly
+                ? 'bg-diff-insert/10 border-l-[3px] border-diff-insert/50'
+                : undefined
 
             return (
               <tr key={i} className={isContext ? '' : undefined}>
                 <SideCell
                   text={isInsertOnly ? null : row.textA}
                   spans={isChanged ? row.intralineSpansA : []}
-                  spanStyle={deleteSpanStyle}
-                  rowStyle={leftStyle}
+                  spanClassName="bg-diff-delete/30"
+                  rowClassName={leftClassName}
                   lineNum={row.lineA}
                 />
                 <SideCell
                   text={isDeleteOnly ? null : row.textB}
                   spans={isChanged ? row.intralineSpansB : []}
-                  spanStyle={insertSpanStyle}
-                  rowStyle={rightStyle}
+                  spanClassName="bg-diff-insert/30"
+                  rowClassName={rightClassName}
                   lineNum={row.lineB}
                 />
               </tr>
@@ -474,16 +442,10 @@ export default function DiffViewer() {
       {/* ── Stats bar ────────────────────────────────────────────────────── */}
       {diffResult.ok && hasContent && (
         <div className="flex items-center gap-4 text-sm">
-          <span
-            style={{ color: 'color-mix(in oklch, oklch(0.6 0.2 145) 90%, var(--color-foreground))' }}
-            className="font-medium tabular-nums"
-          >
+          <span className="font-medium tabular-nums text-diff-insert">
             +{diffResult.stats.additions} addition{diffResult.stats.additions !== 1 ? 's' : ''}
           </span>
-          <span
-            style={{ color: 'color-mix(in oklch, var(--color-destructive) 90%, transparent)' }}
-            className="font-medium tabular-nums"
-          >
+          <span className="font-medium tabular-nums text-diff-delete">
             −{diffResult.stats.deletions} deletion{diffResult.stats.deletions !== 1 ? 's' : ''}
           </span>
           {diffResult.stats.additions === 0 && diffResult.stats.deletions === 0 && (

@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
+import { encode } from 'gpt-tokenizer'
 import {
-  // Re-exports from markdown-editor/logic
+  countTokensGpt,
+  countTokensApprox,
   countWords,
   countChars,
   countLines,
@@ -17,8 +19,35 @@ import {
 import { MARKDOWN_LINK_REGEX } from '@/components/editor/WysiwygEditor'
 
 // ---------------------------------------------------------------------------
-// Re-exported helpers (sanity-check they still work)
+// Local helpers (owned by the VME — no cross-import from markdown-editor)
 // ---------------------------------------------------------------------------
+
+describe('countTokensGpt', () => {
+  it('returns 0 for empty string', () => {
+    expect(countTokensGpt('')).toBe(0)
+  })
+  it('returns the encoded token count for non-empty text', () => {
+    const result = countTokensGpt('hello world')
+    expect(result).toBeGreaterThan(0)
+    expect(result).toBe(encode('hello world').length)
+  })
+})
+
+describe('countTokensApprox', () => {
+  it('returns 0 for empty string', () => {
+    expect(countTokensApprox('')).toBe(0)
+  })
+  it('approximates chars / 3.8', () => {
+    const text = 'a'.repeat(38)
+    expect(countTokensApprox(text)).toBe(10)
+  })
+})
+
+describe('AUTO_VERSION_CAP', () => {
+  it('is 50', () => {
+    expect(AUTO_VERSION_CAP).toBe(50)
+  })
+})
 
 describe('countWords', () => {
   it('counts words correctly', () => {
@@ -83,6 +112,15 @@ describe('pruneAutoVersions', () => {
     expect(result).toHaveLength(AUTO_VERSION_CAP)
   })
 
+  it('uses AUTO_VERSION_CAP as the default cap, preserving newest-first order', () => {
+    const autos = makeVersions(51, true) // v0 = newest .. v50 = oldest
+    const result = pruneAutoVersions(autos)
+    expect(result).toHaveLength(AUTO_VERSION_CAP)
+    expect(result.map((v) => v.id)).toEqual(autos.slice(0, AUTO_VERSION_CAP).map((v) => v.id))
+    // the oldest one (v50) was dropped
+    expect(result.find((v) => v.id === 'v50')).toBeUndefined()
+  })
+
   it('keeps pinned + up to cap auto', () => {
     const versions = [
       ...makeVersions(3, false),  // pinned
@@ -114,6 +152,17 @@ describe('formatVersionTime', () => {
   it('returns "Yesterday at HH:MM" for 1 day ago', () => {
     const result = formatVersionTime(base, base + 86_400_000)
     expect(result).toMatch(/^Yesterday at/)
+  })
+
+  it('returns "N days ago" for 3 days', () => {
+    const result = formatVersionTime(base, base + 3 * 86_400_000)
+    expect(result).toBe('3 days ago')
+  })
+
+  it('returns "<date> at <time>" for more than 7 days ago', () => {
+    const result = formatVersionTime(base, base + 10 * 86_400_000)
+    expect(result).toContain(' at ')
+    expect(result).not.toMatch(/ago$/)
   })
 })
 

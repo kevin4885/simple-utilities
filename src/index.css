@@ -19,6 +19,8 @@
   --color-accent:              var(--accent);
   --color-accent-foreground:   var(--accent-foreground);
   --color-destructive:         var(--destructive);
+  --color-diff-insert:         var(--diff-insert);
+  --color-diff-delete:         var(--diff-delete);
   --color-border:              var(--border);
   --color-input:               var(--input);
   --color-ring:                var(--ring);
@@ -59,6 +61,8 @@
   --accent-foreground:      oklch(1.0 0.0 0);
 
   --destructive:            oklch(0.6378 0.2373 25.4);
+  --diff-insert:            oklch(0.6 0.2 145);          /* green — same value Diff Viewer used */
+  --diff-delete:            var(--destructive);
 
   --border:                 oklch(0.9008 0.0178 255.1);
   --input:                  oklch(0.9008 0.0178 255.1);
@@ -99,6 +103,8 @@
   --accent-foreground:      oklch(1.0 0.0 0);
 
   --destructive:            oklch(0.6560 0.2410 354.3);
+  --diff-insert:            oklch(0.72 0.17 150);        /* brighter green for dark bg */
+  --diff-delete:            var(--destructive);
 
   --border:                 oklch(0.3195 0.0432 263.7);  /* visible against bg + card */
   --input:                  oklch(0.3195 0.0432 263.7);

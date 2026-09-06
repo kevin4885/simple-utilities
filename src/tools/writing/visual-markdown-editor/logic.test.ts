@@ -8,8 +8,11 @@ import {
   countLines,
   generateDocTitle,
   pruneAutoVersions,
+  pruneRestoreSnapshots,
   formatVersionTime,
   AUTO_VERSION_CAP,
+  RESTORE_SNAPSHOT_CAP,
+  RESTORE_SNAPSHOT_LABEL,
   // VME-specific
   getModeLabel,
   EDITOR_MODES,
@@ -131,6 +134,79 @@ describe('pruneAutoVersions', () => {
     expect(result).toHaveLength(6)
     expect(result.filter((v) => !v.auto)).toHaveLength(3)
     expect(result.filter((v) => v.auto)).toHaveLength(3)
+  })
+})
+
+describe('pruneRestoreSnapshots', () => {
+  function snap(id: string, overrides: Partial<{ label?: string; auto: boolean }> = {}) {
+    return { id, label: RESTORE_SNAPSHOT_LABEL, auto: false, ...overrides }
+  }
+
+  it('constants', () => {
+    expect(RESTORE_SNAPSHOT_CAP).toBe(5)
+    expect(RESTORE_SNAPSHOT_LABEL).toBe('Before restore')
+  })
+
+  it('empty array in, empty array out', () => {
+    expect(pruneRestoreSnapshots([])).toEqual([])
+  })
+
+  it('fewer snapshots than the cap are all kept', () => {
+    const versions = [snap('a'), snap('b'), snap('c')]
+    const result = pruneRestoreSnapshots(versions, 5)
+    expect(result).toEqual(versions)
+  })
+
+  it('keeps the 5 newest snapshots, drops the 2 oldest, preserves other versions and order', () => {
+    const versions = [
+      snap('s1'),
+      { id: 'auto1', label: undefined, auto: true },
+      snap('s2'),
+      snap('s3'),
+      { id: 'manual1', label: undefined, auto: false },
+      snap('s4'),
+      { id: 'pinned1', label: 'v1', auto: false },
+      snap('s5'),
+      snap('s6'), // 6th snapshot — beyond cap, dropped
+      snap('s7'), // 7th snapshot — beyond cap, dropped
+    ]
+    const result = pruneRestoreSnapshots(versions, 5)
+    expect(result.map((v) => v.id)).toEqual([
+      's1', 'auto1', 's2', 's3', 'manual1', 's4', 'pinned1', 's5',
+    ])
+    expect(result.find((v) => v.id === 's6')).toBeUndefined()
+    expect(result.find((v) => v.id === 's7')).toBeUndefined()
+  })
+
+  it('a snapshot with auto:true (defensive, not reachable today) is not counted and is kept', () => {
+    const versions = [
+      snap('s1'),
+      snap('s2'),
+      snap('s3'),
+      snap('s4'),
+      snap('s5'),
+      { id: 'weird', label: RESTORE_SNAPSHOT_LABEL, auto: true },
+      snap('s6'), // 6th real snapshot — beyond cap, dropped
+    ]
+    const result = pruneRestoreSnapshots(versions, 5)
+    expect(result.find((v) => v.id === 'weird')).toBeDefined()
+    expect(result.find((v) => v.id === 's6')).toBeUndefined()
+    expect(result).toHaveLength(6)
+  })
+
+  it('a renamed snapshot (label no longer matches) is never pruned', () => {
+    const versions = [
+      snap('s1'),
+      snap('s2'),
+      snap('s3'),
+      snap('s4'),
+      snap('s5'),
+      { id: 'renamed', label: 'keep me', auto: false },
+      snap('s6'), // 6th real snapshot — beyond cap, dropped
+    ]
+    const result = pruneRestoreSnapshots(versions, 5)
+    expect(result.find((v) => v.id === 'renamed')).toBeDefined()
+    expect(result.find((v) => v.id === 's6')).toBeUndefined()
   })
 })
 

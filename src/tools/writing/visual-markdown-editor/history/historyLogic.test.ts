@@ -9,6 +9,7 @@ import {
   formatDiffStats,
 } from './historyLogic'
 import type { VmeVersion } from '../store'
+import { formatVersionTime } from '../logic'
 
 function makeVersion(overrides: Partial<VmeVersion> = {}): VmeVersion {
   return {
@@ -70,6 +71,20 @@ describe('versionTitle', () => {
     const now = Date.now()
     const v = makeVersion({ savedAt: now - 30_000 })
     expect(versionTitle(v, now)).toBe('Just now')
+  })
+  it('returns formatVersionTime(savedAt, now) when label is an empty string', () => {
+    const now = Date.now()
+    const v = makeVersion({ label: '', savedAt: now - 30_000 })
+    expect(versionTitle(v, now)).toBe('Just now')
+  })
+})
+
+describe('versionTitle / getVersionKind consistency on empty label', () => {
+  it('label: "" is treated as unlabeled by both versionTitle and getVersionKind', () => {
+    const now = Date.now()
+    const v = makeVersion({ label: '', auto: true, savedAt: now - 30_000 })
+    expect(getVersionKind(v)).toBe('auto')
+    expect(versionTitle(v, now)).toBe(formatVersionTime(v.savedAt, now))
   })
 })
 

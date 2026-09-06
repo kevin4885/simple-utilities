@@ -64,7 +64,7 @@ export function summarizeVersions(versions: VmeVersion[]): VersionSummary {
  * @param now  Current time in ms — injectable for deterministic tests.
  */
 export function versionTitle(v: VmeVersion, now = Date.now()): string {
-  return v.label ?? formatVersionTime(v.savedAt, now)
+  return v.label || formatVersionTime(v.savedAt, now)
 }
 
 // ---------------------------------------------------------------------------

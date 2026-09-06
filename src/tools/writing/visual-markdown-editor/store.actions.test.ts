@@ -6,7 +6,7 @@
  * state is seeded/reset via setState in beforeEach.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useVmeStore, type VmeDoc } from './store'
 import { AUTO_VERSION_CAP } from './logic'
 
@@ -156,6 +156,77 @@ describe('restoreVersion', () => {
   })
 })
 
+describe('restoreVersion — snapshot cap', () => {
+  it('caps automatic "Before restore" snapshots at 5, dropping the oldest first', () => {
+    // Seed 6 distinct target versions t1..t6, current content starts at c0.
+    const targets = ['t1', 't2', 't3', 't4', 't5', 't6'].map((id, i) => ({
+      id,
+      content: id,
+      savedAt: i,
+      auto: true,
+    }))
+    useVmeStore.setState({
+      docs: [makeDoc({ content: 'c0', versions: targets })],
+      activeDocId: 'd1',
+    })
+
+    // Restoring t1 snapshots 'c0'; restoring t2 snapshots 't1' (the content
+    // just restored to); etc. Each restore's *current* content differs from
+    // the newest version, so every restore creates a new "Before restore" snapshot.
+    for (const id of ['t1', 't2', 't3', 't4', 't5', 't6']) {
+      useVmeStore.getState().restoreVersion('d1', id)
+    }
+
+    const doc = useVmeStore.getState().docs[0]
+    const snapshots = doc.versions.filter((v) => v.label === 'Before restore')
+    expect(snapshots).toHaveLength(5)
+    // The oldest snapshot (of 'c0', taken during the first restore) was pruned.
+    expect(snapshots.find((v) => v.content === 'c0')).toBeUndefined()
+    // The original t* target versions are untouched.
+    expect(targets.every((t) => doc.versions.some((v) => v.id === t.id))).toBe(true)
+    expect(doc.content).toBe('t6')
+  })
+
+  it('a renamed "Before restore" snapshot survives the cap', () => {
+    const targets = ['t1', 't2', 't3', 't4', 't5', 't6'].map((id, i) => ({
+      id,
+      content: id,
+      savedAt: i,
+      auto: true,
+    }))
+    useVmeStore.setState({
+      docs: [makeDoc({ content: 'c0', versions: targets })],
+      activeDocId: 'd1',
+    })
+
+    for (const id of ['t1', 't2', 't3', 't4', 't5', 't6']) {
+      useVmeStore.getState().restoreVersion('d1', id)
+    }
+
+    // Rename the oldest surviving "Before restore" snapshot (exempts it from future pruning).
+    const beforeRename = useVmeStore.getState().docs[0].versions
+    const oldestSnapshot = [...beforeRename].reverse().find((v) => v.label === 'Before restore')
+    expect(oldestSnapshot).toBeDefined()
+    useVmeStore.getState().pinVersion('d1', oldestSnapshot!.id, 'keep me')
+
+    // One more restore — would normally push the snapshot count to 6 and prune the oldest,
+    // but the renamed one no longer matches the label so it's exempt.
+    useVmeStore.getState().restoreVersion('d1', 't1')
+
+    const doc = useVmeStore.getState().docs[0]
+    expect(doc.versions.find((v) => v.label === 'keep me')).toBeDefined()
+    const snapshots = doc.versions.filter((v) => v.label === 'Before restore')
+    // Exactly 5 "Before restore" snapshots survive: the one renamed to "keep me" is
+    // exempt from the cap, so the 7th auto snapshot (from this extra restore) still
+    // triggers pruning down to 5 — proving the cap logic actually ran.
+    expect(snapshots).toHaveLength(5)
+    // Total versions: 5 "Before restore" snapshots + 1 renamed "keep me" snapshot +
+    // 6 original target versions (t1..t6, untouched) = 12. This fails if pruning is
+    // removed (would be 13) or over-pruned.
+    expect(doc.versions).toHaveLength(12)
+  })
+})
+
 describe('deleteVersion', () => {
   it('removes only the given version id', () => {
     const v1 = { id: 'v1', content: 'a', savedAt: 1, auto: true }
@@ -178,6 +249,30 @@ describe('deleteVersion', () => {
     const before = useVmeStore.getState().docs
     useVmeStore.getState().deleteVersion('unknown-doc', 'v1')
     expect(useVmeStore.getState().docs).toEqual(before)
+  })
+
+  it('unknown docId does not notify subscribers and keeps the same docs reference', () => {
+    const v1 = { id: 'v1', content: 'a', savedAt: 1, auto: true }
+    useVmeStore.setState({ docs: [makeDoc({ versions: [v1] })], activeDocId: 'd1' })
+    const before = useVmeStore.getState().docs
+    const spy = vi.fn()
+    const unsub = useVmeStore.subscribe(spy)
+    useVmeStore.getState().deleteVersion('unknown-doc', 'v1')
+    expect(spy).not.toHaveBeenCalled()
+    expect(useVmeStore.getState().docs).toBe(before)
+    unsub()
+  })
+
+  it('unknown versionId does not notify subscribers and keeps the same docs reference', () => {
+    const v1 = { id: 'v1', content: 'a', savedAt: 1, auto: true }
+    useVmeStore.setState({ docs: [makeDoc({ versions: [v1] })], activeDocId: 'd1' })
+    const before = useVmeStore.getState().docs
+    const spy = vi.fn()
+    const unsub = useVmeStore.subscribe(spy)
+    useVmeStore.getState().deleteVersion('d1', 'does-not-exist')
+    expect(spy).not.toHaveBeenCalled()
+    expect(useVmeStore.getState().docs).toBe(before)
+    unsub()
   })
 })
 
@@ -213,5 +308,29 @@ describe('pinVersion', () => {
     const before = useVmeStore.getState().docs
     useVmeStore.getState().pinVersion('unknown-doc', 'v1', 'x')
     expect(useVmeStore.getState().docs).toEqual(before)
+  })
+
+  it('unknown docId does not notify subscribers and keeps the same docs reference', () => {
+    const v1 = { id: 'v1', content: 'a', savedAt: 1, auto: true }
+    useVmeStore.setState({ docs: [makeDoc({ versions: [v1] })], activeDocId: 'd1' })
+    const before = useVmeStore.getState().docs
+    const spy = vi.fn()
+    const unsub = useVmeStore.subscribe(spy)
+    useVmeStore.getState().pinVersion('unknown-doc', 'v1', 'x')
+    expect(spy).not.toHaveBeenCalled()
+    expect(useVmeStore.getState().docs).toBe(before)
+    unsub()
+  })
+
+  it('unknown versionId does not notify subscribers and keeps the same docs reference', () => {
+    const v1 = { id: 'v1', content: 'a', savedAt: 1, auto: true }
+    useVmeStore.setState({ docs: [makeDoc({ versions: [v1] })], activeDocId: 'd1' })
+    const before = useVmeStore.getState().docs
+    const spy = vi.fn()
+    const unsub = useVmeStore.subscribe(spy)
+    useVmeStore.getState().pinVersion('d1', 'does-not-exist', 'x')
+    expect(spy).not.toHaveBeenCalled()
+    expect(useVmeStore.getState().docs).toBe(before)
+    unsub()
   })
 })

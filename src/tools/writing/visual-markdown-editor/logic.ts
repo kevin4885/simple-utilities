@@ -93,6 +93,38 @@ export function pruneAutoVersions<T extends HasAutoFlag>(
   })
 }
 
+/** Label applied to the automatic snapshot saved just before a restore. */
+export const RESTORE_SNAPSHOT_LABEL = 'Before restore'
+
+/** Maximum number of automatic "Before restore" snapshots to retain per document. */
+export const RESTORE_SNAPSHOT_CAP = 5
+
+/** Minimal shape required by pruneRestoreSnapshots (avoids circular dep with store). */
+interface HasLabelAndAuto {
+  label?: string
+  auto: boolean
+}
+
+/**
+ * Prune excess automatic "Before restore" snapshots from a newest-first
+ * ordered array. Only entries with `label === RESTORE_SNAPSHOT_LABEL && auto
+ * === false` are counted and subject to pruning — every other version
+ * (including a "Before restore" snapshot the user has since renamed, which
+ * no longer matches the label) is left untouched. Original array ordering
+ * is preserved.
+ */
+export function pruneRestoreSnapshots<T extends HasLabelAndAuto>(
+  versions: T[],
+  cap = RESTORE_SNAPSHOT_CAP,
+): T[] {
+  let snapshotCount = 0
+  return versions.filter((v) => {
+    if (v.label !== RESTORE_SNAPSHOT_LABEL || v.auto) return true // not a restore snapshot — always keep
+    snapshotCount++
+    return snapshotCount <= cap
+  })
+}
+
 /**
  * Format a version timestamp as a human-readable relative/absolute string.
  * @param savedAt  Unix timestamp in milliseconds.

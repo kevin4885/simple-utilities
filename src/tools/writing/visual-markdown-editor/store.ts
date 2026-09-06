@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { z } from 'zod'
-import { generateDocTitle, pruneAutoVersions, AUTO_VERSION_CAP, EDITOR_MODE_IDS } from './logic'
+import { generateDocTitle, pruneAutoVersions, AUTO_VERSION_CAP, EDITOR_MODE_IDS, pruneRestoreSnapshots, RESTORE_SNAPSHOT_LABEL } from './logic'
 
 // ---------------------------------------------------------------------------
 // Schema (Zod — validates on rehydrate)
@@ -73,6 +73,15 @@ interface VmeState {
    * to the most recent version (skip duplicate snapshots).
    */
   saveVersion:    (docId: string, opts?: { label?: string; auto?: boolean }) => string | null
+  /**
+   * Restore a document's content to a previous version.
+   * Snapshots the current content first (label "Before restore", auto:false)
+   * so the user can undo, then applies the target version's content.
+   * Automatic "Before restore" snapshots are capped (see pruneRestoreSnapshots)
+   * — the oldest ones beyond the cap are dropped in the same update. A
+   * snapshot the user has renamed no longer matches the cap's label check,
+   * so renaming a "Before restore" entry is how a user pins it forever.
+   */
   restoreVersion: (docId: string, versionId: string) => void
   deleteVersion:  (docId: string, versionId: string) => void
   pinVersion:     (docId: string, versionId: string, label: string) => void
@@ -182,18 +191,20 @@ export const useVmeStore = create<VmeState>()(
         if (!target) return
 
         // Snapshot current state first so user can undo
-        saveVersion(docId, { label: 'Before restore', auto: false })
+        saveVersion(docId, { label: RESTORE_SNAPSHOT_LABEL, auto: false })
 
         set((s) => ({
           docs: s.docs.map((d) =>
             d.id === docId
-              ? { ...d, content: target.content, updatedAt: Date.now() }
+              ? { ...d, content: target.content, updatedAt: Date.now(), versions: pruneRestoreSnapshots(d.versions) }
               : d,
           ),
         }))
       },
 
       deleteVersion(docId: string, versionId: string) {
+        const doc = get().docs.find((d) => d.id === docId)
+        if (!doc || !doc.versions.some((v) => v.id === versionId)) return
         set((s) => ({
           docs: s.docs.map((d) =>
             d.id === docId
@@ -204,6 +215,8 @@ export const useVmeStore = create<VmeState>()(
       },
 
       pinVersion(docId: string, versionId: string, label: string) {
+        const doc = get().docs.find((d) => d.id === docId)
+        if (!doc || !doc.versions.some((v) => v.id === versionId)) return
         set((s) => ({
           docs: s.docs.map((d) =>
             d.id === docId

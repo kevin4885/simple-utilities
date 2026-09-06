@@ -47,6 +47,14 @@ Open `src/tools/registry.ts` and add **one entry** to the `tools` array:
 **That's the only change needed outside the tool folder.**
 The route (`/tools/<tool-id>`), home-page card, and nav entry are all derived automatically.
 
+### Legacy tool ids
+
+If you rename an existing tool's `id` (or move its folder), add the old id to
+`LEGACY_TOOL_IDS` in `registry.ts` (`{ '<old-id>': '<new-id>' }`) so `ToolPage` redirects
+old bookmarks/PWA shortcuts instead of 404ing. If the tool's localStorage key also changes,
+migrate it once in the tool's `logic.ts` — see `migrateLegacyStorage` in
+`writing/markdown-editor/logic.ts`, called from `store.ts` before the persist store is created.
+
 ---
 
 ## Step 3 — Write logic tests first (TDD recommended)

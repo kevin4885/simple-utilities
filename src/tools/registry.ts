@@ -289,10 +289,16 @@ export const tools: ToolDef[] = [
     category: 'Writing',
     title: 'Markdown Editor',
     description:
-      'Distraction-free markdown editor for LLM prompts and docs. Live preview, per-document undo history, real-time token counts (GPT-4o exact; Claude/Gemini estimated), and multi-document management — all saved locally.',
+      'WYSIWYG markdown editor with four modes — Visual (rich-text), Markdown (source), Preview, and Split — plus a formatting toolbar, slash-command menu, tables, and task lists. ' +
+      'Real-time token counts (GPT-4o exact; Claude/Gemini estimated), per-document version history, and multi-document management. ' +
+      'Export to PDF, HTML, or Markdown, or copy as rich text — everything stays in-browser, no server, no uploads.',
     keywords: [
       'markdown',
       'editor',
+      'wysiwyg',
+      'visual',
+      'rich text',
+      'no-code',
       'llm',
       'prompt',
       'writing',
@@ -303,6 +309,23 @@ export const tools: ToolDef[] = [
       'gemini',
       'notes',
       'docs',
+      'document',
+      'formatting',
+      'bold',
+      'italic',
+      'table',
+      'list',
+      'task list',
+      'checkbox',
+      'heading',
+      'blockquote',
+      'code block',
+      'prose',
+      'tiptap',
+      'pdf',
+      'html',
+      'export',
+      'print',
     ],
     component: lazy(() => import('./writing/markdown-editor/index')),
   },
@@ -664,42 +687,6 @@ export const tools: ToolDef[] = [
     component: lazy(() => import('./time/timestamp-converter/index')),
   },
   {
-    id: 'visual-markdown-editor',
-    category: 'Writing',
-    title: 'Visual Markdown Editor',
-    description:
-      'WYSIWYG markdown editor for non-technical users. Four modes: Visual (rich-text), Markdown (source), Preview, and Split (live side-by-side). ' +
-      'Gravity-UI-style formatting toolbar, floating selection toolbar, / slash command menu, tables with hover row/column handles, task lists, and multi-document support. ' +
-      'Error-safe: visual editor crashes fall back to Markdown mode automatically. All editing stays in-browser — no uploads, no server.',
-    keywords: [
-      'wysiwyg',
-      'markdown',
-      'visual',
-      'editor',
-      'rich text',
-      'no-code',
-      'writing',
-      'document',
-      'formatting',
-      'bold',
-      'italic',
-      'table',
-      'list',
-      'task list',
-      'checkbox',
-      'heading',
-      'blockquote',
-      'code block',
-      'preview',
-      'prose',
-      'tiptap',
-      'llm',
-      'prompt',
-      'tokens',
-    ],
-    component: lazy(() => import('./writing/visual-markdown-editor/index')),
-  },
-  {
     id: 'llano-castell',
     category: 'Rivers',
     title: 'Llano River @ Castell',
@@ -729,4 +716,9 @@ export const categories = [...new Set(tools.map((t) => t.category))]
 /** Look up a tool by id */
 export function getToolById(id: string): ToolDef | undefined {
   return tools.find((t) => t.id === id)
+}
+
+/** Old tool ids → current ids; ToolPage redirects these. */
+export const LEGACY_TOOL_IDS: Record<string, string> = {
+  'visual-markdown-editor': 'markdown-editor',
 }

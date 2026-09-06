@@ -110,7 +110,8 @@ import MarkdownRenderer from '@/components/editor/MarkdownRenderer'
 
 A TipTap (ProseMirror) WYSIWYG editor with markdown as the single source of truth.
 Tracks dark mode internally. Can be embedded standalone — safe to use without the
-full VME tool page. Includes `TooltipProvider` internally for toolbar tooltips.
+full VME tool page (VME = legacy internal prefix; the tool is now the Markdown Editor at
+`src/tools/writing/markdown-editor/`). Includes `TooltipProvider` internally for toolbar tooltips.
 
 ### Dependencies
 
@@ -670,7 +671,7 @@ The module-level `_dropdownOpen` flag has been replaced with `menuOpen: boolean`
 
 ### Split mode
 
-Split mode is implemented entirely in the VME page (`tools/writing/visual-markdown-editor/index.tsx`) — it is NOT a WysiwygEditor feature. Split renders a `ResizablePanelGroup` with `CodeEditor` (left) and `MarkdownRenderer` (right). Below `md` breakpoint the direction switches to `vertical` via the `useMediaQuery('(min-width: 768px)')` hook in `src/lib/useMediaQuery.ts`.
+Split mode is implemented entirely in the VME page (`tools/writing/markdown-editor/index.tsx`) — it is NOT a WysiwygEditor feature. Split renders a `ResizablePanelGroup` with `CodeEditor` (left) and `MarkdownRenderer` (right). Below `md` breakpoint the direction switches to `vertical` via the `useMediaQuery('(min-width: 768px)')` hook in `src/lib/useMediaQuery.ts`.
 
 The panel group is keyed on orientation (`key={isDesktop ? 'split-h' : 'split-v'}`) so `react-resizable-panels` remounts cleanly if it cannot change direction at runtime.
 

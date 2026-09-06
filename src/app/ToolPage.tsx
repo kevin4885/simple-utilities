@@ -1,12 +1,16 @@
 import { Suspense } from 'react'
-import { useParams, Link } from 'react-router'
+import { useParams, Link, Navigate } from 'react-router'
 import { ArrowLeft } from 'lucide-react'
-import { getToolById } from '@/tools/registry'
+import { getToolById, LEGACY_TOOL_IDS } from '@/tools/registry'
 import { NotFoundPage } from './NotFoundPage'
 
 export function ToolPage() {
   const { id } = useParams<{ id: string }>()
   const tool = id ? getToolById(id) : undefined
+
+  if (!tool && id && LEGACY_TOOL_IDS[id]) {
+    return <Navigate to={`/tools/${LEGACY_TOOL_IDS[id]}`} replace />
+  }
 
   if (!tool) return <NotFoundPage />
 

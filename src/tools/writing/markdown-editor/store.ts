@@ -1,7 +1,26 @@
+/**
+ * Markdown Editor — Zustand store (persisted to localStorage under
+ * `su:markdown-editor`, see STORAGE_KEY in ./logic).
+ *
+ * Before the persist middleware is created, `migrateLegacyStorage` runs once
+ * to move any data left under the old `su:visual-markdown-editor` key (used
+ * by this tool when it was still named "Visual Markdown Editor") to the new
+ * key, discarding whatever the old CodeMirror-only "Markdown Editor" tool had
+ * stored there.
+ */
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { z } from 'zod'
-import { generateDocTitle, pruneAutoVersions, AUTO_VERSION_CAP } from './logic'
+import {
+  generateDocTitle,
+  pruneAutoVersions,
+  AUTO_VERSION_CAP,
+  EDITOR_MODE_IDS,
+  pruneRestoreSnapshots,
+  RESTORE_SNAPSHOT_LABEL,
+  STORAGE_KEY,
+  migrateLegacyStorage,
+} from './logic'
 
 // ---------------------------------------------------------------------------
 // Schema (Zod — validates on rehydrate)
@@ -11,7 +30,6 @@ const VersionSchema = z.object({
   id: z.string().min(1),
   content: z.string(),
   savedAt: z.number(),
-  /** User-supplied name for pinned versions. */
   label: z.string().optional(),
   /** true = auto-captured, false = manually pinned (never auto-purged). */
   auto: z.boolean(),
@@ -27,60 +45,72 @@ const DocSchema = z.object({
 
 const ModelSchema = z.enum(['gpt4o', 'claude', 'gemini'])
 
+/** Phase 4: added editorMode and hintDismissed to persisted state. */
+const EditorModeSchema = z.enum(EDITOR_MODE_IDS)
+
 const PersistedSchema = z.object({
   docs: z.array(DocSchema).min(1),
   activeDocId: z.string().min(1),
   selectedModel: ModelSchema,
+  /** Persisted editor mode (Phase 4). Defaults to 'wysiwyg' on old state. */
+  editorMode: EditorModeSchema.optional(),
+  /** Whether the empty-doc first-run hint has been dismissed (Phase 4). */
+  hintDismissed: z.boolean().optional(),
 })
 
-export type Version = z.infer<typeof VersionSchema>
-export type Doc = z.infer<typeof DocSchema>
-export type Model = z.infer<typeof ModelSchema>
+export type VmeVersion = z.infer<typeof VersionSchema>
+export type VmeDoc    = z.infer<typeof DocSchema>
+export type VmeModel  = z.infer<typeof ModelSchema>
+export type VmeEditorMode = z.infer<typeof EditorModeSchema>
 
 // ---------------------------------------------------------------------------
 // Store interface
 // ---------------------------------------------------------------------------
 
-interface MarkdownEditorState {
-  docs: Doc[]
+interface VmeState {
+  docs: VmeDoc[]
   activeDocId: string
-  selectedModel: Model
+  selectedModel: VmeModel
+  /** Persisted editor mode. Default 'wysiwyg'. */
+  editorMode: VmeEditorMode
+  /** Whether the first-run hint has been dismissed. */
+  hintDismissed: boolean
 
-  createDoc: () => void
-  deleteDoc: (id: string) => void
-  updateDoc: (id: string, patch: Partial<Pick<Doc, 'title' | 'content'>>) => void
-  setActiveDoc: (id: string) => void
-  setModel: (m: Model) => void
+  createDoc:   () => void
+  deleteDoc:   (id: string) => void
+  updateDoc:   (id: string, patch: Partial<Pick<VmeDoc, 'title' | 'content'>>) => void
+  setActiveDoc:(id: string) => void
+  setModel:    (m: VmeModel) => void
+  setEditorMode: (mode: VmeEditorMode) => void
+  dismissHint:   () => void
 
   /**
    * Capture the current content of `docId` as a new version entry.
    * Auto-versions beyond AUTO_VERSION_CAP are pruned (oldest first).
-   * Supply `label` to create a pinned (non-auto) version instead.
+   * Supply `label` to create a pinned (non-auto) version.
    * Returns the new version's id, or null if content is empty or identical
    * to the most recent version (skip duplicate snapshots).
    */
-  saveVersion: (docId: string, opts?: { label?: string; auto?: boolean }) => string | null
-
+  saveVersion:    (docId: string, opts?: { label?: string; auto?: boolean }) => string | null
   /**
-   * Restore a previously saved version.
-   * 1. Saves the current content as an auto-version labelled "Before restore" first.
-   * 2. Updates doc.content to the version's content.
-   * Returns the "before restore" snapshot id so callers can clear EditorState.
+   * Restore a document's content to a previous version.
+   * Snapshots the current content first (label "Before restore", auto:false)
+   * so the user can undo, then applies the target version's content.
+   * Automatic "Before restore" snapshots are capped (see pruneRestoreSnapshots)
+   * — the oldest ones beyond the cap are dropped in the same update. A
+   * snapshot the user has renamed no longer matches the cap's label check,
+   * so renaming a "Before restore" entry is how a user pins it forever.
    */
   restoreVersion: (docId: string, versionId: string) => void
-
-  /** Permanently delete a single version entry. */
-  deleteVersion: (docId: string, versionId: string) => void
-
-  /** Rename / pin an auto version by setting a label (auto becomes false). */
-  pinVersion: (docId: string, versionId: string, label: string) => void
+  deleteVersion:  (docId: string, versionId: string) => void
+  pinVersion:     (docId: string, versionId: string, label: string) => void
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeDoc(title: string): Doc {
+function makeDoc(title: string): VmeDoc {
   return {
     id: crypto.randomUUID(),
     title,
@@ -90,16 +120,24 @@ function makeDoc(title: string): Doc {
   }
 }
 
-function fallbackState(): Pick<MarkdownEditorState, 'docs' | 'activeDocId' | 'selectedModel'> {
+function fallbackState(): Pick<VmeState, 'docs' | 'activeDocId' | 'selectedModel' | 'editorMode' | 'hintDismissed'> {
   const doc = makeDoc('Untitled 1')
-  return { docs: [doc], activeDocId: doc.id, selectedModel: 'gpt4o' }
+  return { docs: [doc], activeDocId: doc.id, selectedModel: 'gpt4o', editorMode: 'wysiwyg', hintDismissed: false }
 }
+
+// ---------------------------------------------------------------------------
+// Legacy storage migration — must run before the persist middleware reads
+// storage, so it stays at module top-level, guarded for SSR/test environments
+// that lack `window`/`localStorage`.
+// ---------------------------------------------------------------------------
+
+if (typeof window !== 'undefined' && window.localStorage) migrateLegacyStorage(window.localStorage)
 
 // ---------------------------------------------------------------------------
 // Store
 // ---------------------------------------------------------------------------
 
-export const useMarkdownEditorStore = create<MarkdownEditorState>()(
+export const useVmeStore = create<VmeState>()(
   persist(
     (set, get) => ({
       ...fallbackState(),
@@ -119,7 +157,7 @@ export const useMarkdownEditorStore = create<MarkdownEditorState>()(
         set({ docs: next, activeDocId: newActive })
       },
 
-      updateDoc(id: string, patch: Partial<Pick<Doc, 'title' | 'content'>>) {
+      updateDoc(id: string, patch: Partial<Pick<VmeDoc, 'title' | 'content'>>) {
         set((s) => ({
           docs: s.docs.map((d) =>
             d.id === id ? { ...d, ...patch, updatedAt: Date.now() } : d,
@@ -131,8 +169,16 @@ export const useMarkdownEditorStore = create<MarkdownEditorState>()(
         set({ activeDocId: id })
       },
 
-      setModel(m: Model) {
+      setModel(m: VmeModel) {
         set({ selectedModel: m })
+      },
+
+      setEditorMode(mode: VmeEditorMode) {
+        set({ editorMode: mode })
+      },
+
+      dismissHint() {
+        set({ hintDismissed: true })
       },
 
       saveVersion(docId: string, opts = {}) {
@@ -140,15 +186,12 @@ export const useMarkdownEditorStore = create<MarkdownEditorState>()(
         const { docs } = get()
         const doc = docs.find((d) => d.id === docId)
         if (!doc) return null
-
-        // Skip if content is empty
         if (!doc.content.trim()) return null
 
-        // Skip duplicate — same content as the most recent version
         const newest = doc.versions[0]
         if (newest && newest.content === doc.content) return null
 
-        const version: Version = {
+        const version: VmeVersion = {
           id: crypto.randomUUID(),
           content: doc.content,
           savedAt: Date.now(),
@@ -156,7 +199,6 @@ export const useMarkdownEditorStore = create<MarkdownEditorState>()(
           ...(label ? { label } : {}),
         }
 
-        // Prepend newest first, then prune excess auto-versions
         const updated = pruneAutoVersions([version, ...doc.versions], AUTO_VERSION_CAP)
 
         set((s) => ({
@@ -175,20 +217,21 @@ export const useMarkdownEditorStore = create<MarkdownEditorState>()(
         const target = doc.versions.find((v) => v.id === versionId)
         if (!target) return
 
-        // 1. Snapshot current state before overwriting so user can get back
-        saveVersion(docId, { label: 'Before restore', auto: false })
+        // Snapshot current state first so user can undo
+        saveVersion(docId, { label: RESTORE_SNAPSHOT_LABEL, auto: false })
 
-        // 2. Apply the version content
         set((s) => ({
           docs: s.docs.map((d) =>
             d.id === docId
-              ? { ...d, content: target.content, updatedAt: Date.now() }
+              ? { ...d, content: target.content, updatedAt: Date.now(), versions: pruneRestoreSnapshots(d.versions) }
               : d,
           ),
         }))
       },
 
       deleteVersion(docId: string, versionId: string) {
+        const doc = get().docs.find((d) => d.id === docId)
+        if (!doc || !doc.versions.some((v) => v.id === versionId)) return
         set((s) => ({
           docs: s.docs.map((d) =>
             d.id === docId
@@ -199,13 +242,17 @@ export const useMarkdownEditorStore = create<MarkdownEditorState>()(
       },
 
       pinVersion(docId: string, versionId: string, label: string) {
+        const doc = get().docs.find((d) => d.id === docId)
+        if (!doc || !doc.versions.some((v) => v.id === versionId)) return
         set((s) => ({
           docs: s.docs.map((d) =>
             d.id === docId
               ? {
                   ...d,
                   versions: d.versions.map((v) =>
-                    v.id === versionId ? { ...v, label: label.trim() || v.label, auto: false } : v,
+                    v.id === versionId
+                      ? { ...v, label: label.trim() || v.label, auto: false }
+                      : v,
                   ),
                 }
               : d,
@@ -214,15 +261,21 @@ export const useMarkdownEditorStore = create<MarkdownEditorState>()(
       },
     }),
     {
-      name: 'su:markdown-editor',
-      // Validate + sanitise on rehydrate; fall back to clean state on corruption
+      name: STORAGE_KEY,
       merge(persisted, current) {
         const result = PersistedSchema.safeParse(persisted)
         if (!result.success) return current
-        const { docs, activeDocId, selectedModel } = result.data
-        // Ensure activeDocId actually exists in docs
+        const { docs, activeDocId, selectedModel, editorMode, hintDismissed } = result.data
         const validId = docs.find((d) => d.id === activeDocId) ? activeDocId : docs[0].id
-        return { ...current, docs, activeDocId: validId, selectedModel }
+        return {
+          ...current,
+          docs,
+          activeDocId: validId,
+          selectedModel,
+          // Phase 4 fields: fall back to defaults if missing from old persisted state
+          editorMode: editorMode ?? 'wysiwyg',
+          hintDismissed: hintDismissed ?? false,
+        }
       },
     },
   ),

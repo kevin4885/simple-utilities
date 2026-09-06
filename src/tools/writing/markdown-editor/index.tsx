@@ -1,17 +1,62 @@
+/**
+ * Visual Markdown Editor — WYSIWYG editor tool page
+ *
+ * Modes (via ToggleGroup, persisted in store):
+ *   Visual    → WysiwygEditor (TipTap) — rich text with toolbar + floating toolbar
+ *   Markdown  → CodeEditor (CodeMirror, language="markdown")
+ *   Preview   → MarkdownRenderer (read-only)
+ *   Split     → ResizablePanelGroup: CodeEditor (left) | MarkdownRenderer (right)
+ *               Below md breakpoint falls back to vertical split direction.
+ *
+ * All modes share the same markdown string from the store (single source of truth).
+ * Switching modes never loses content. WysiwygEditor flushes pending onChange before
+ * unmounting (via wysiwygRef.current?.flush()).
+ *
+ * Error boundary (Phase 4):
+ *   WysiwygEditor is wrapped in WysiwygErrorBoundary. On any render crash the
+ *   boundary catches, flushes pending edits, calls onError → mode switches to
+ *   'markdown', and shows a brief inline notice.
+ *
+ * Version history:
+ *   The store (`./store.ts`) auto-snapshots the active doc after 5 minutes of
+ *   inactivity, on doc switch, and keeps a manual "Save now" action; a
+ *   pinned "Before restore" snapshot is added automatically on restore. The
+ *   history UI lives in `./history/` and is entirely props-only (never
+ *   imports the store) — this page owns the wiring: it flushes the WYSIWYG
+ *   editor's debounced onChange (a) before opening the drawer, (b) before
+ *   "Save now", and (c) before Restore, so the diff/snapshot never lags
+ *   behind the last keystrokes; it also clears the inactivity timer on
+ *   manual Save now and Restore to avoid a redundant auto-version firing
+ *   later. Restore only writes `doc.content` in the store — it never touches
+ *   CodeMirror/TipTap internals; WysiwygEditor's external-value sync effect
+ *   and CodeEditor's `value` prop pick up the new content in every mode.
+ *   `handleContentChange` early-returns when the incoming content equals the
+ *   store's current content, so a flush that carries no real edit (drawer
+ *   open, Save now, Restore, mode/doc switch) never bumps `updatedAt` or
+ *   arms the inactivity timer.
+ *
+ * Keyboard shortcuts:
+ *   Ctrl+Alt+P / Cmd+Alt+P — toggles between current editing mode and 'preview'
+ *   (remembers previous mode to return to).
+ *
+ * Layout:
+ *   Desktop (md+):
+ *     [Center: mode switcher + editor area] [Right: collapsible doc list]
+ *   Mobile (<md):
+ *     Toolbar (mode switcher + actions) + editor area stacked; docs in Sheet
+ */
+
 import {
   useState,
   useEffect,
   useRef,
   useCallback,
-  useDeferredValue,
+  useMemo,
+  type RefObject,
 } from 'react'
-import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror'
-import { markdown as markdownLang } from '@codemirror/lang-markdown'
-import { EditorState, type Extension } from '@codemirror/state'
-import { EditorView } from '@codemirror/view'
-import { vscodeDark, vscodeLight } from '@uiw/codemirror-theme-vscode'
 import {
-  PanelLeft,
+  ChevronLeft,
+  ChevronRight,
   Plus,
   Trash2,
   Copy,
@@ -19,118 +64,112 @@ import {
   FileText,
   Download,
   Pencil,
+  PanelLeft,
+  Layers,
+  Eye,
+  Code2,
+  Columns2,
+  KeyboardIcon,
   History,
-  RotateCcw,
-  Pin,
   X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useDebouncedValue } from '@/lib/useDebouncedValue'
+import { useMediaQuery } from '@/lib/useMediaQuery'
 import { Button } from '@/components/ui/button'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 import {
   Sheet,
   SheetContent,
   SheetHeader,
   SheetTitle,
   SheetTrigger,
-  SheetClose,
 } from '@/components/ui/sheet'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog'
 import { Separator } from '@/components/ui/separator'
 import {
   ResizablePanelGroup,
   ResizablePanel,
   ResizableHandle,
 } from '@/components/ui/resizable'
+import WysiwygEditor, { type WysiwygEditorHandle } from '@/components/editor/WysiwygEditor'
+import CodeEditor from '@/components/editor/CodeEditor'
 import MarkdownRenderer from '@/components/editor/MarkdownRenderer'
+import { WysiwygErrorBoundary } from '@/components/editor/wysiwyg/WysiwygErrorBoundary'
+import VersionHistoryDrawer from './history/VersionHistoryDrawer'
 import {
   countTokensGpt,
   countTokensApprox,
   countWords,
   countChars,
   countLines,
-  formatVersionTime,
+  toSafeFilename,
+  KEYBOARD_SHORTCUTS,
+  EDITOR_MODES,
 } from './logic'
-import { useMarkdownEditorStore, type Doc, type Model, type Version } from './store'
+import { useVmeStore, type VmeDoc, type VmeModel, type VmeEditorMode } from './store'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-/** Inactivity threshold (ms) before an auto-version is captured. */
-const INACTIVITY_MS = 5 * 60 * 1000 // 5 minutes
+const INACTIVITY_MS = 5 * 60 * 1000
 
-// ── Editor theme (local) ──────────────────────────────────────────────────────
-// Kept here (not in shared CodeEditor) because the markdown editor manages its
-// own EditorState per-document for undo history, and needs to reconstruct the
-// extensions when creating a fresh EditorState on first visit to a doc.
-function makeEditorTheme(dark: boolean): Extension[] {
-  const base = dark ? vscodeDark : vscodeLight
-  const baseExts = Array.isArray(base) ? base : [base]
-  return [
-    ...baseExts,
-    EditorView.theme({
-      '&':                    { backgroundColor: 'transparent !important', height: '100%' },
-      '.cm-content':          { color: dark ? '#9ca3af' : '#374151' },
-      '.cm-scroller':         { backgroundColor: 'transparent !important', overflow: 'auto' },
-      '.cm-gutters':          {
-        backgroundColor: 'transparent !important',
-        borderRight: '1px solid color-mix(in srgb, currentColor 12%, transparent)',
-      },
-      '.cm-activeLineGutter': { backgroundColor: 'rgba(128,128,128,0.08) !important' },
-      '.cm-activeLine':       { backgroundColor: 'rgba(128,128,128,0.08) !important' },
-    }),
-  ]
-}
-
-// ── Token counting ────────────────────────────────────────────────────────────
-
-function getTokenCount(text: string, model: Model): number {
-  if (model === 'gpt4o') return countTokensGpt(text)
-  return countTokensApprox(text)
-}
-
-function isApprox(model: Model): boolean {
-  return model !== 'gpt4o'
-}
-
-const MODEL_LABELS: Record<Model, string> = {
-  gpt4o: 'GPT-4o',
+const MODEL_LABELS: Record<VmeModel, string> = {
+  gpt4o:  'GPT-4o',
   claude: 'Claude',
   gemini: 'Gemini',
 }
 
-const MODEL_CONTEXT: Record<Model, string> = {
-  gpt4o: '128K ctx',
+const MODEL_CONTEXT: Record<VmeModel, string> = {
+  gpt4o:  '128K ctx',
   claude: '200K ctx',
   gemini: '1M ctx',
 }
 
-// ── DocSidebar ────────────────────────────────────────────────────────────────
+// ── Token helpers ─────────────────────────────────────────────────────────────
 
-interface DocSidebarProps {
-  docs: Doc[]
+function getTokenCount(text: string, model: VmeModel): number {
+  return model === 'gpt4o' ? countTokensGpt(text) : countTokensApprox(text)
+}
+
+function isApprox(model: VmeModel): boolean {
+  return model !== 'gpt4o'
+}
+
+// ── DocSidePanel ──────────────────────────────────────────────────────────────
+
+interface DocSidePanelProps {
+  docs: VmeDoc[]
   activeDocId: string
   onSelect: (id: string) => void
   onNew: () => void
   onDelete: (id: string) => void
   onRename: (id: string, title: string) => void
-  /** When true, renders inside a Sheet (mobile) — hides the outer border. */
-  inSheet?: boolean
 }
 
-function DocSidebar({
+function DocSidePanel({
   docs,
   activeDocId,
   onSelect,
   onNew,
   onDelete,
   onRename,
-  inSheet = false,
-}: DocSidebarProps) {
+}: DocSidePanelProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
-  function startEdit(doc: Doc) {
+  function startEdit(doc: VmeDoc) {
     setEditingId(doc.id)
     setEditValue(doc.title)
     setTimeout(() => inputRef.current?.select(), 0)
@@ -144,13 +183,8 @@ function DocSidebar({
   }
 
   return (
-    <div
-      className={cn(
-        'flex flex-col h-full bg-card',
-        !inSheet && 'border-r border-border',
-      )}
-    >
-      {/* Sidebar header */}
+    <div className="flex flex-col h-full bg-card">
+      {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
         <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
           Documents
@@ -170,9 +204,8 @@ function DocSidebar({
       {/* Doc list */}
       <div className="flex-1 overflow-y-auto py-1 min-h-0">
         {docs.map((doc) => {
-          const isActive = doc.id === activeDocId
+          const isActive  = doc.id === activeDocId
           const isEditing = editingId === doc.id
-
           return (
             <div
               key={doc.id}
@@ -214,7 +247,6 @@ function DocSidebar({
                 </span>
               )}
 
-              {/* Rename button — visible on hover / active */}
               {!isEditing && (
                 <button
                   className={cn(
@@ -230,7 +262,6 @@ function DocSidebar({
                 </button>
               )}
 
-              {/* Delete — only show if more than 1 doc */}
               {docs.length > 1 && !isEditing && (
                 <button
                   className={cn(
@@ -238,10 +269,7 @@ function DocSidebar({
                     'opacity-0 group-hover:opacity-100 hover:text-destructive hover:bg-destructive/10',
                     isActive && 'opacity-100',
                   )}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onDelete(doc.id)
-                  }}
+                  onClick={(e) => { e.stopPropagation(); onDelete(doc.id) }}
                   title="Delete document"
                   aria-label={`Delete ${doc.title}`}
                 >
@@ -253,102 +281,6 @@ function DocSidebar({
         })}
       </div>
     </div>
-  )
-}
-
-// ── StatusBar ─────────────────────────────────────────────────────────────────
-
-interface StatusBarProps {
-  text: string
-  model: Model
-  onModelChange: (m: Model) => void
-}
-
-function StatusBar({ text, model, onModelChange }: StatusBarProps) {
-  // Defer token count so fast typing never lags
-  const deferredText = useDeferredValue(text)
-  const tokens = getTokenCount(deferredText, model)
-  const approx = isApprox(model)
-  const words = countWords(deferredText)
-  const chars = countChars(deferredText)
-  const lines = countLines(deferredText)
-
-  return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1.5 border-t border-border bg-muted/40 text-xs text-muted-foreground shrink-0">
-      {/* Model toggle */}
-      <ToggleGroup
-        type="single"
-        value={model}
-        onValueChange={(v) => { if (v) onModelChange(v as Model) }}
-        className="gap-0.5"
-      >
-        {(Object.keys(MODEL_LABELS) as Model[]).map((m) => (
-          <ToggleGroupItem
-            key={m}
-            value={m}
-            className="h-5 px-1.5 text-[10px] font-medium"
-            title={MODEL_CONTEXT[m]}
-          >
-            {MODEL_LABELS[m]}
-          </ToggleGroupItem>
-        ))}
-      </ToggleGroup>
-
-      <Separator orientation="vertical" className="h-3 hidden sm:block" />
-
-      {/* Counts */}
-      <span className="font-mono tabular-nums">
-        {approx && <span className="mr-0.5 opacity-60">~</span>}
-        <span className="font-semibold text-foreground">{tokens.toLocaleString()}</span>
-        {' '}tokens
-      </span>
-
-      <span className="hidden sm:inline font-mono tabular-nums">
-        <span className="font-semibold text-foreground">{words.toLocaleString()}</span>
-        {' '}words
-      </span>
-
-      <span className="hidden sm:inline font-mono tabular-nums">
-        <span className="font-semibold text-foreground">{chars.toLocaleString()}</span>
-        {' '}chars
-      </span>
-
-      <span className="hidden md:inline font-mono tabular-nums">
-        <span className="font-semibold text-foreground">{lines.toLocaleString()}</span>
-        {' '}lines
-      </span>
-    </div>
-  )
-}
-
-// ── CopyButton ────────────────────────────────────────────────────────────────
-
-function CopyButton({ getText, label }: { getText: () => string; label: string }) {
-  const [copied, setCopied] = useState(false)
-
-  async function handleCopy() {
-    try {
-      await navigator.clipboard.writeText(getText())
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1800)
-    } catch { /* silent */ }
-  }
-
-  return (
-    <Button
-      variant="ghost"
-      size="sm"
-      className="h-7 gap-1.5 text-xs"
-      onClick={handleCopy}
-      title={label}
-      aria-label={label}
-    >
-      {copied ? (
-        <><Check className="h-3.5 w-3.5 text-green-500" /><span className="hidden sm:inline text-green-500">Copied!</span></>
-      ) : (
-        <><Copy className="h-3.5 w-3.5" /><span className="hidden sm:inline">Copy</span></>
-      )}
-    </Button>
   )
 }
 
@@ -365,10 +297,9 @@ function InlineTitle({ title, onRename }: InlineTitleProps) {
   const inputRef = useRef<HTMLInputElement>(null)
 
   function startEdit() {
-    // Refresh value from current title prop when entering edit mode
     setValue(title)
     setEditing(true)
-    setTimeout(() => { inputRef.current?.select() }, 0)
+    setTimeout(() => inputRef.current?.select(), 0)
   }
 
   function commit() {
@@ -405,209 +336,189 @@ function InlineTitle({ title, onRename }: InlineTitleProps) {
   )
 }
 
-// ── VersionItem ───────────────────────────────────────────────────────────────
+// ── CopyButton ────────────────────────────────────────────────────────────────
 
-interface VersionItemProps {
-  version: Version
-  onRestore: () => void
-  onPin: (label: string) => void
-  onDelete: () => void
-}
+function CopyButton({ getText, label }: { getText: () => string; label: string }) {
+  const [copied, setCopied] = useState(false)
 
-function VersionItem({ version, onRestore, onPin, onDelete }: VersionItemProps) {
-  const [pinning, setPinning] = useState(false)
-  const [pinLabel, setPinLabel] = useState(version.label ?? '')
-  const inputRef = useRef<HTMLInputElement>(null)
-  const timeLabel = formatVersionTime(version.savedAt)
-  const words = countWords(version.content)
-
-  function startPin() {
-    setPinLabel(version.label ?? '')
-    setPinning(true)
-    setTimeout(() => inputRef.current?.focus(), 0)
-  }
-
-  function commitPin() {
-    const trimmed = pinLabel.trim()
-    onPin(trimmed || (version.label ?? 'Pinned version'))
-    setPinning(false)
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(getText())
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1800)
+    } catch { /* silent */ }
   }
 
   return (
-    <div className="group flex flex-col gap-1 px-3 py-2.5 border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
-      {/* Top row: timestamp + badges */}
-      <div className="flex items-center gap-1.5 min-w-0">
-        <span className="flex-1 min-w-0 text-xs font-medium text-foreground truncate" title={timeLabel}>
-          {version.label ?? timeLabel}
-        </span>
-        {version.label && (
-          <span className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-primary/10 text-primary">
-            Pinned
-          </span>
-        )}
-        {version.auto && !version.label && (
-          <span className="shrink-0 text-[10px] text-muted-foreground/60">Auto</span>
-        )}
-      </div>
-
-      {/* Sub-row: word count + relative time when label shown */}
-      <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-        <span>{words.toLocaleString()} {words === 1 ? 'word' : 'words'}</span>
-        {version.label && (
-          <>
-            <span>·</span>
-            <span>{timeLabel}</span>
-          </>
-        )}
-      </div>
-
-      {/* Pin label input */}
-      {pinning && (
-        <input
-          ref={inputRef}
-          value={pinLabel}
-          onChange={(e) => setPinLabel(e.target.value)}
-          onBlur={commitPin}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') commitPin()
-            if (e.key === 'Escape') setPinning(false)
-          }}
-          placeholder="Name this version…"
-          className="mt-0.5 w-full bg-background border border-input rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-        />
+    <Button variant="ghost" size="sm" className="h-7 gap-1.5 text-xs" onClick={handleCopy} title={label} aria-label={label}>
+      {copied ? (
+        <><Check className="h-3.5 w-3.5 text-green-500" /><span className="hidden sm:inline text-green-500">Copied!</span></>
+      ) : (
+        <><Copy className="h-3.5 w-3.5" /><span className="hidden sm:inline">Copy</span></>
       )}
+    </Button>
+  )
+}
 
-      {/* Actions — visible on hover */}
-      {!pinning && (
-        <div className="flex items-center gap-1 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button
-            onClick={onRestore}
-            className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors rounded px-1.5 py-0.5 hover:bg-muted"
-            title="Restore this version"
-          >
-            <RotateCcw className="h-3 w-3" />
-            Restore
-          </button>
-          <button
-            onClick={startPin}
-            className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors rounded px-1.5 py-0.5 hover:bg-muted"
-            title={version.label ? 'Rename pin' : 'Pin this version'}
-          >
-            <Pin className="h-3 w-3" />
-            {version.label ? 'Rename' : 'Pin'}
-          </button>
-          <button
-            onClick={onDelete}
-            className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-destructive transition-colors rounded px-1.5 py-0.5 hover:bg-destructive/10 ml-auto"
-            title="Delete this version"
-          >
-            <X className="h-3 w-3" />
-          </button>
+// ── ShortcutsDialog ───────────────────────────────────────────────────────────
+
+/** Groups shortcuts by category for display. */
+function ShortcutsDialog() {
+  const grouped = useMemo(() => {
+    const map = new Map<string, typeof KEYBOARD_SHORTCUTS>()
+    for (const s of KEYBOARD_SHORTCUTS) {
+      const arr = map.get(s.category) ?? []
+      arr.push(s)
+      map.set(s.category, arr)
+    }
+    return map
+  }, [])
+
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 shrink-0"
+          title="Keyboard shortcuts"
+          aria-label="Show keyboard shortcuts"
+        >
+          <KeyboardIcon className="h-4 w-4" />
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Keyboard Shortcuts</DialogTitle>
+        </DialogHeader>
+        <div className="flex flex-col gap-4 pt-2">
+          {Array.from(grouped.entries()).map(([category, shortcuts]) => (
+            <div key={category}>
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                {category}
+              </div>
+              <div className="flex flex-col gap-1">
+                {shortcuts.map((s) => (
+                  <div key={s.keys} className="flex items-center justify-between gap-4 text-sm">
+                    <span className="text-foreground">{s.description}</span>
+                    <kbd className="shrink-0 text-[11px] font-mono bg-muted text-muted-foreground px-1.5 py-0.5 rounded border border-border whitespace-nowrap">
+                      {s.keys}
+                    </kbd>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
-      )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ── StatusBar ─────────────────────────────────────────────────────────────────
+
+interface StatusBarProps {
+  text: string
+  model: VmeModel
+  onModelChange: (m: VmeModel) => void
+}
+
+function StatusBar({ text, model, onModelChange }: StatusBarProps) {
+  // Debounce the text used for counting to ~300ms so heavy counts don't run
+  // on every keystroke.
+  const deferredText = useDebouncedValue(text, 300)
+
+  const tokens = useMemo(() => getTokenCount(deferredText, model), [deferredText, model])
+  const approx  = isApprox(model)
+  const words    = useMemo(() => countWords(deferredText),  [deferredText])
+  const chars    = useMemo(() => countChars(deferredText),  [deferredText])
+  const lines    = useMemo(() => countLines(deferredText),  [deferredText])
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1.5 border-t border-border bg-muted/40 text-xs text-muted-foreground shrink-0">
+      <ToggleGroup
+        type="single"
+        value={model}
+        onValueChange={(v) => { if (v) onModelChange(v as VmeModel) }}
+        className="gap-0.5"
+      >
+        {(Object.keys(MODEL_LABELS) as VmeModel[]).map((m) => (
+          <ToggleGroupItem
+            key={m}
+            value={m}
+            className="h-5 px-1.5 text-[10px] font-medium"
+            title={MODEL_CONTEXT[m]}
+          >
+            {MODEL_LABELS[m]}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
+
+      <Separator orientation="vertical" className="h-3 hidden sm:block" />
+
+      <span className="font-mono tabular-nums">
+        {approx && <span className="mr-0.5 opacity-60">~</span>}
+        <span className="font-semibold text-foreground">{tokens.toLocaleString()}</span>
+        {' '}tokens
+      </span>
+      <span className="hidden sm:inline font-mono tabular-nums">
+        <span className="font-semibold text-foreground">{words.toLocaleString()}</span>
+        {' '}words
+      </span>
+      <span className="hidden sm:inline font-mono tabular-nums">
+        <span className="font-semibold text-foreground">{chars.toLocaleString()}</span>
+        {' '}chars
+      </span>
+      <span className="hidden md:inline font-mono tabular-nums">
+        <span className="font-semibold text-foreground">{lines.toLocaleString()}</span>
+        {' '}lines
+      </span>
     </div>
   )
 }
 
-// ── HistoryDrawer ─────────────────────────────────────────────────────────────
+// ── EmptyHint ─────────────────────────────────────────────────────────────────
 
-interface HistoryDrawerProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  doc: Doc
-  onSaveVersion: () => void
-  onRestore: (versionId: string) => void
-  onPin: (versionId: string, label: string) => void
-  onDelete: (versionId: string) => void
+/**
+ * One-line muted hint shown only when the document is empty (and not dismissed).
+ * Dismissal is stored in the VME store (hintDismissed: boolean).
+ */
+interface EmptyHintProps {
+  content: string
+  dismissed: boolean
+  onDismiss: () => void
 }
 
-function HistoryDrawer({
-  open,
-  onOpenChange,
-  doc,
-  onSaveVersion,
-  onRestore,
-  onPin,
-  onDelete,
-}: HistoryDrawerProps) {
+function EmptyHint({ content, dismissed, onDismiss }: EmptyHintProps) {
+  if (dismissed || content.trim()) return null
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        side="right"
-        className="w-72 sm:max-w-xs p-0 flex flex-col gap-0"
-        showCloseButton={false}
+    <div className="flex items-center justify-between gap-2 px-4 py-1.5 border-b border-border bg-muted/30 text-xs text-muted-foreground">
+      <span>
+        Tip: select text for formatting, type{' '}
+        <kbd className="font-mono bg-muted border border-border rounded px-0.5">/</kbd>
+        {' '}for blocks, hover a table for row/column handles.
+      </span>
+      <button
+        onClick={onDismiss}
+        className="shrink-0 rounded p-0.5 hover:bg-muted hover:text-foreground transition-colors"
+        title="Dismiss tip"
+        aria-label="Dismiss tip"
       >
-        {/* Header */}
-        <SheetHeader className="flex flex-row items-center justify-between px-4 py-3 border-b border-border shrink-0 gap-0">
-          <SheetTitle className="text-sm font-semibold">Version History</SheetTitle>
-          <div className="flex items-center gap-1">
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 text-xs gap-1.5"
-              onClick={onSaveVersion}
-              title="Save a version now"
-            >
-              <History className="h-3.5 w-3.5" />
-              Save now
-            </Button>
-            <SheetClose asChild>
-              <Button size="icon" variant="ghost" className="h-7 w-7">
-                <X className="h-3.5 w-3.5" />
-                <span className="sr-only">Close</span>
-              </Button>
-            </SheetClose>
-          </div>
-        </SheetHeader>
-
-        {/* Version list */}
-        <div className="flex-1 overflow-y-auto min-h-0">
-          {doc.versions.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-2 h-40 text-center px-6">
-              <History className="h-8 w-8 text-muted-foreground/40" />
-              <p className="text-sm text-muted-foreground">No versions yet</p>
-              <p className="text-xs text-muted-foreground/60">
-                Versions are saved automatically every 5 minutes of inactivity, when you switch
-                documents, or when you click "Save now".
-              </p>
-            </div>
-          ) : (
-            doc.versions.map((v) => (
-              <VersionItem
-                key={v.id}
-                version={v}
-                onRestore={() => onRestore(v.id)}
-                onPin={(label) => onPin(v.id, label)}
-                onDelete={() => onDelete(v.id)}
-              />
-            ))
-          )}
-        </div>
-
-        {/* Footer — version count */}
-        {doc.versions.length > 0 && (
-          <div className="px-4 py-2 border-t border-border shrink-0">
-            <p className="text-[11px] text-muted-foreground/60 text-center">
-              {doc.versions.filter((v) => !v.auto).length} pinned
-              {' · '}
-              {doc.versions.filter((v) => v.auto).length} auto
-              {' · '}
-              {doc.versions.length} total
-            </p>
-          </div>
-        )}
-      </SheetContent>
-    </Sheet>
+        <X className="h-3 w-3" />
+      </button>
+    </div>
   )
 }
 
-// ── MarkdownEditorPage ────────────────────────────────────────────────────────
+// ── VisualMarkdownEditorPage ──────────────────────────────────────────────────
 
-export default function MarkdownEditorPage() {
+export default function VisualMarkdownEditorPage() {
   const {
     docs,
     activeDocId,
     selectedModel,
+    editorMode,
+    hintDismissed,
     createDoc,
     deleteDoc,
     updateDoc,
@@ -617,98 +528,88 @@ export default function MarkdownEditorPage() {
     restoreVersion,
     deleteVersion,
     pinVersion,
-  } = useMarkdownEditorStore()
+    setEditorMode,
+    dismissHint,
+  } = useVmeStore()
 
   const activeDoc = docs.find((d) => d.id === activeDocId) ?? docs[0]
 
-  // Per-document EditorState map — preserves undo history on doc switch
-  const stateMapRef = useRef<Map<string, EditorState>>(new Map())
-  const editorRef = useRef<ReactCodeMirrorRef>(null)
-  const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'))
-  const [mobileTab, setMobileTab] = useState<'edit' | 'preview'>('edit')
-  const [sheetOpen, setSheetOpen] = useState(false)
+  // mode is driven by store; keep a local alias for convenience
+  const mode = editorMode
+  const [docsOpen, setDocsOpen] = useState(true)
+  const [mobileDocsOpen, setMobileDocsOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
 
-  // Inactivity timer ref — fires auto-version after INACTIVITY_MS of no typing
+  // Error state for the wysiwyg panel — declared before handleModeChange
+  // (which references it) to avoid a stale-closure if it were declared later.
+  const [wysiwygError, setWysiwygError] = useState(false)
+
+  // Ref to WysiwygEditor's imperative handle for flushing before mode switch
+  const wysiwygRef = useRef<WysiwygEditorHandle>(null)
+
+  // Track previous non-preview mode for Ctrl+Alt+P toggle
+  const prevNonPreviewMode = useRef<VmeEditorMode>(mode !== 'preview' ? mode : 'wysiwyg')
+
+  // Media query for split mode direction (vertical on mobile, horizontal on desktop)
+  const isDesktop = useMediaQuery('(min-width: 768px)')
+
+  // Inactivity auto-version timer
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Track theme changes so CodeMirror re-builds extensions when .dark toggles
+  // Reset mobile sheet when rotating to desktop — avoids the sheet
+  // re-opening after: phone portrait → sheet open → rotate to desktop →
+  // rotate back to portrait. isDesktop is an external media-query state;
+  // resetting mobileDocsOpen when it flips true is legitimate synchronisation.
   useEffect(() => {
-    const el = document.documentElement
-    const obs = new MutationObserver(() => setDark(el.classList.contains('dark')))
-    obs.observe(el, { attributes: true, attributeFilter: ['class'] })
-    return () => obs.disconnect()
-  }, [])
+    if (isDesktop) setMobileDocsOpen(false) // eslint-disable-line react-hooks/set-state-in-effect
+  }, [isDesktop])
 
-  // Recompute extensions when theme flips — stored so EditorState restores use same set
-  const extensionsRef = useRef<Extension[]>([markdownLang(), ...makeEditorTheme(dark)])
-  useEffect(() => {
-    extensionsRef.current = [markdownLang(), ...makeEditorTheme(dark)]
-  }, [dark])
-
-  // Cleanup inactivity timer on unmount
   useEffect(() => {
     return () => {
       if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current)
     }
   }, [])
 
-  // When switching docs: auto-version current doc (if content changed) then restore target state
-  const switchDoc = useCallback(
-    (newId: string) => {
-      if (newId === activeDocId) return
+  // ── Version history helpers ─────────────────────────────────────────────────
 
-      // Cancel any pending inactivity snapshot for the outgoing doc
-      if (inactivityTimerRef.current) {
-        clearTimeout(inactivityTimerRef.current)
-        inactivityTimerRef.current = null
-      }
-
-      // Auto-snapshot outgoing doc on switch (saveVersion skips duplicates internally)
-      saveVersion(activeDocId, { auto: true })
-
-      // Save current editor state (preserves undo history)
-      const view = editorRef.current?.view
-      if (view) {
-        stateMapRef.current.set(activeDocId, view.state)
-      }
-
-      setActiveDoc(newId)
-    },
-    [activeDocId, setActiveDoc, saveVersion],
-  )
-
-  // After activeDocId changes, restore the saved state into the view
-  useEffect(() => {
-    const view = editorRef.current?.view
-    if (!view) return
-
-    const doc = docs.find((d) => d.id === activeDocId)
-    if (!doc) return
-
-    const saved = stateMapRef.current.get(activeDocId)
-    if (saved) {
-      // Restore the previously saved EditorState (preserves full undo history)
-      view.setState(saved)
-    } else {
-      // First visit — create a fresh EditorState from stored content
-      const freshState = EditorState.create({
-        doc: doc.content,
-        extensions: extensionsRef.current,
-      })
-      view.setState(freshState)
-    }
-  }, [activeDocId]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  function handleDocChange(id: string) {
-    switchDoc(id)
-    setSheetOpen(false)
+  /** Flush WysiwygEditor's debounced onChange so the store has the latest markdown. */
+  function flushEditor() {
+    if (mode === 'wysiwyg') wysiwygRef.current?.flush()
   }
 
-  function handleEditorChange(value: string) {
-    updateDoc(activeDoc.id, { content: value })
+  function clearInactivityTimer() {
+    if (inactivityTimerRef.current) {
+      clearTimeout(inactivityTimerRef.current)
+      inactivityTimerRef.current = null
+    }
+  }
 
-    // Reset inactivity timer — fires auto-version after INACTIVITY_MS of no typing
+  function openHistory() {
+    flushEditor()
+    setHistoryOpen(true)
+  }
+
+  function handleManualSaveVersion(): string | null {
+    flushEditor()
+    clearInactivityTimer()
+    return saveVersion(activeDoc.id, { auto: false })
+  }
+
+  function handleRestoreVersion(versionId: string) {
+    flushEditor()
+    clearInactivityTimer()
+    restoreVersion(activeDoc.id, versionId)
+    setHistoryOpen(false)
+  }
+
+  // ── Content change handler ─────────────────────────────────────────────────
+
+  function handleContentChange(content: string) {
+    // Flushes (drawer open, save, restore, mode/doc switch) re-emit the current
+    // markdown; skip when unchanged so updatedAt and the inactivity timer are
+    // untouched.
+    if (content === activeDoc.content) return
+    updateDoc(activeDoc.id, { content })
     if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current)
     inactivityTimerRef.current = setTimeout(() => {
       saveVersion(activeDoc.id, { auto: true })
@@ -716,92 +617,176 @@ export default function MarkdownEditorPage() {
     }, INACTIVITY_MS)
   }
 
+  // ── Mode switch ────────────────────────────────────────────────────────────
+
+  function handleModeChange(newMode: VmeEditorMode) {
+    if (newMode === mode) return
+    // Before leaving wysiwyg mode, flush any pending debounced onChange so
+    // the store has the latest markdown before the editor unmounts.
+    if (mode === 'wysiwyg') {
+      wysiwygRef.current?.flush()
+    }
+    // Track last non-preview mode for Ctrl+Alt+P toggle
+    if (mode !== 'preview') {
+      prevNonPreviewMode.current = mode
+    }
+    // Clear the crash banner when leaving markdown mode (e.g. via toolbar)
+    // so it doesn't linger in other modes.
+    if (wysiwygError && newMode !== 'markdown') {
+      setWysiwygError(false)
+    }
+    setEditorMode(newMode)
+  }
+
+  // ── Error boundary handler ─────────────────────────────────────────────────
+
+  function handleWysiwygError() {
+    // Boundary already flushed; switch to markdown mode and show the banner
+    setEditorMode('markdown')
+    setWysiwygError(true)
+  }
+
+  function handleWysiwygRetry() {
+    // Clear error banner and re-enter wysiwyg — a fresh boundary mounts
+    setWysiwygError(false)
+    setEditorMode('wysiwyg')
+  }
+
+  // ── Doc switch ─────────────────────────────────────────────────────────────
+
+  const switchDoc = useCallback(
+    (newId: string) => {
+      if (newId === activeDocId) return
+      // Flush wysiwyg before switching
+      if (mode === 'wysiwyg') {
+        wysiwygRef.current?.flush()
+      }
+      clearInactivityTimer()
+      saveVersion(activeDocId, { auto: true })
+      setActiveDoc(newId)
+      setMobileDocsOpen(false)
+      setHistoryOpen(false)
+    },
+    [activeDocId, mode, setActiveDoc, saveVersion],
+  )
+
+  // ── Download ───────────────────────────────────────────────────────────────
+
   function handleDownload() {
     const blob = new Blob([activeDoc.content], { type: 'text/markdown' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `${activeDoc.title.replace(/[^a-z0-9]/gi, '-').toLowerCase()}.md`
+    a.download = `${toSafeFilename(activeDoc.title) || 'document'}.md`
     a.click()
     URL.revokeObjectURL(url)
   }
 
-  /**
-   * Restore a version: snapshot current state, apply version content, and
-   * clear the EditorState entry so the existing useEffect re-creates a fresh
-   * EditorState from doc.content — wiping the undo stack cleanly (Option A).
-   */
-  function handleRestoreVersion(versionId: string) {
-    restoreVersion(activeDoc.id, versionId)
-    // Clear the cached EditorState so the useEffect below creates a fresh one
-    // from the restored content, giving a clean undo stack
-    stateMapRef.current.delete(activeDoc.id)
-    // Trigger the restore into the CodeMirror view by faking an activeDocId change effect
-    const view = editorRef.current?.view
-    if (view) {
-      // Get the freshly restored content from store (restoreVersion is synchronous)
-      const updatedDoc = useMarkdownEditorStore.getState().docs.find(
-        (d) => d.id === activeDoc.id,
-      )
-      if (updatedDoc) {
-        const freshState = EditorState.create({
-          doc: updatedDoc.content,
-          extensions: extensionsRef.current,
-        })
-        view.setState(freshState)
+  // ── Ctrl+Alt+P / Cmd+Alt+P — toggle preview ────────────────────────────────
+  //
+  // Ctrl+Shift+P is Firefox's non-preventable "New Private Window" shortcut,
+  // so we use Ctrl+Alt+P instead. No default binding in Chrome/Firefox/Edge.
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      const modKey = e.ctrlKey || e.metaKey
+      // Use e.code ('KeyP') not e.key ('p'/'π') — on macOS Option+P produces 'π',
+      // so e.key is unreliable for modifier-augmented shortcuts.
+      if (modKey && e.altKey && e.code === 'KeyP') {
+        e.preventDefault()
+        if (mode === 'preview') {
+          // Return to previous editing mode
+          handleModeChange(prevNonPreviewMode.current)
+        } else {
+          prevNonPreviewMode.current = mode
+          handleModeChange('preview')
+        }
       }
     }
-    setHistoryOpen(false)
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode])
+
+  // ── Mode icons ─────────────────────────────────────────────────────────────
+
+  // Labels/titles/order come from EDITOR_MODES in logic.ts (single source of
+  // truth, React-free); only the icons are defined here.
+  const modeIcons: Record<VmeEditorMode, React.ReactNode> = {
+    wysiwyg:  <Layers   className="h-3.5 w-3.5" />,
+    markdown: <Code2    className="h-3.5 w-3.5" />,
+    preview:  <Eye      className="h-3.5 w-3.5" />,
+    split:    <Columns2 className="h-3.5 w-3.5" />,
   }
 
-  function handleManualSaveVersion() {
-    saveVersion(activeDoc.id, { auto: false })
-  }
+  // ── Top toolbar (mode switcher + doc actions) ──────────────────────────────
 
-  // ── Toolbar ───────────────────────────────────────────────────────
-
-  const toolbar = (
-    <div className="flex items-center gap-1 px-2 py-1.5 border-b border-border bg-card shrink-0">
-      {/* Mobile: hamburger */}
-      <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-        <SheetTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 md:hidden"
-            aria-label="Open documents"
-          >
-            <PanelLeft className="h-4 w-4" />
-          </Button>
-        </SheetTrigger>
-        <SheetContent side="left" className="w-64 p-0">
+  const topToolbar = (
+    <div className="flex items-center gap-1 px-2 py-1.5 border-b border-border bg-card shrink-0 min-w-0">
+      {/* Mobile: doc list trigger. Gated on the same isDesktop query as the
+          desktop Collapsible so exactly one Documents UI exists at any width. */}
+      <Sheet open={mobileDocsOpen && !isDesktop} onOpenChange={setMobileDocsOpen}>
+        {!isDesktop && (
+          <SheetTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 shrink-0"
+              aria-label="Open documents"
+            >
+              <PanelLeft className="h-4 w-4" />
+            </Button>
+          </SheetTrigger>
+        )}
+        <SheetContent side="right" className="w-64 p-0">
           <SheetHeader className="sr-only">
             <SheetTitle>Documents</SheetTitle>
           </SheetHeader>
-          <DocSidebar
+          <DocSidePanel
             docs={docs}
             activeDocId={activeDocId}
-            onSelect={handleDocChange}
-            onNew={() => { createDoc(); setSheetOpen(false) }}
+            onSelect={switchDoc}
+            onNew={() => { createDoc(); setMobileDocsOpen(false) }}
             onDelete={deleteDoc}
             onRename={(id, title) => updateDoc(id, { title })}
-            inSheet
           />
         </SheetContent>
       </Sheet>
 
-      {/* Active doc title — click to rename */}
+      {/* Inline title */}
       <InlineTitle
         title={activeDoc.title}
         onRename={(title) => updateDoc(activeDoc.id, { title })}
       />
 
-      {/* Actions */}
+      {/* Mode switcher */}
+      <ToggleGroup
+        type="single"
+        value={mode}
+        onValueChange={(v) => { if (v) handleModeChange(v as VmeEditorMode) }}
+        className="gap-0 shrink-0"
+      >
+        {EDITOR_MODES.map((m) => (
+          <ToggleGroupItem
+            key={m.id}
+            value={m.id}
+            className="h-7 px-2 text-[11px] font-medium gap-1"
+            title={m.title}
+          >
+            {modeIcons[m.id]}
+            <span className="hidden sm:inline">{m.label}</span>
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
+
+      <Separator orientation="vertical" className="h-5 mx-0.5 hidden sm:block" />
+
+      {/* Copy + Download + Shortcuts */}
       <CopyButton getText={() => activeDoc.content} label="Copy markdown" />
       <Button
         variant="ghost"
         size="sm"
-        className="h-7 gap-1.5 text-xs"
+        className="h-7 gap-1.5 text-xs shrink-0"
         onClick={handleDownload}
         title="Download as .md"
         aria-label="Download as .md"
@@ -809,130 +794,195 @@ export default function MarkdownEditorPage() {
         <Download className="h-3.5 w-3.5" />
         <span className="hidden sm:inline">.md</span>
       </Button>
-
-      {/* History button */}
       <Button
         variant="ghost"
         size="icon"
-        className={cn('h-7 w-7', historyOpen && 'bg-muted')}
-        onClick={() => setHistoryOpen(true)}
+        className={cn('h-7 w-7 shrink-0', historyOpen && 'bg-muted')}
+        onClick={openHistory}
         title="Version history"
         aria-label="Version history"
       >
         <History className="h-3.5 w-3.5" />
       </Button>
+      <ShortcutsDialog />
     </div>
   )
 
-  // ── Editor pane ───────────────────────────────────────────────────
-  // Uses raw CodeMirror (not the shared <CodeEditor>) so we can attach
-  // editorRef for per-document undo-state management.
+  // ── Editor area (conditional rendering — only active mode is mounted) ───────
 
-  const editorPane = (
-    <CodeMirror
-      ref={editorRef}
-      value={activeDoc.content}
-      extensions={[markdownLang(), ...makeEditorTheme(dark)]}
-      theme="none"
-      onChange={handleEditorChange}
-      basicSetup={{
-        lineNumbers: false,
-        foldGutter: false,
-        highlightActiveLine: true,
-        history: true,
-      }}
-      className="h-full overflow-auto text-sm [&_.cm-editor]:h-full [&_.cm-scroller]:font-mono [&_.cm-scroller]:leading-relaxed"
-      height="100%"
-    />
-  )
-
-  // ── Preview pane ──────────────────────────────────────────────────
-
-  const previewPane = (
-    <div className="h-full overflow-y-auto px-5 py-4">
-      <MarkdownRenderer content={activeDoc.content} />
+  const wysiwygPanel = (
+    <div className="h-full overflow-y-auto">
+      <WysiwygEditor
+        ref={wysiwygRef}
+        value={activeDoc.content}
+        onChange={handleContentChange}
+        placeholder="Start writing… (type / for commands)"
+        className="h-full"
+        onChangeDebounceMs={150}
+        toolbar={true}
+      />
     </div>
   )
 
-  // ── Full layout ───────────────────────────────────────────────────
+  const editorArea = (
+    <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+      {/* Crash banner — compact strip above the editor; shown after a wysiwyg
+          render crash, dismissed when user retries visual mode. */}
+      {wysiwygError && (
+        <div
+          role="alert"
+          className="shrink-0 flex items-center justify-between gap-3 px-4 py-2 border-b border-destructive/30 bg-destructive/10 text-sm text-foreground"
+        >
+          <span>
+            The visual editor hit a problem and switched to Markdown mode.
+            Your content is safe.
+          </span>
+          <button
+            className="shrink-0 rounded-md border border-border bg-background px-3 py-1 text-xs hover:bg-muted transition-colors whitespace-nowrap"
+            onClick={handleWysiwygRetry}
+          >
+            Try visual mode again
+          </button>
+        </div>
+      )}
+
+      {/* Empty-doc first-run hint — only shown in wysiwyg mode */}
+      {mode === 'wysiwyg' && (
+        <EmptyHint
+          content={activeDoc.content}
+          dismissed={hintDismissed}
+          onDismiss={dismissHint}
+        />
+      )}
+
+      <div className="flex-1 min-h-0 overflow-hidden">
+        {/* Wysiwyg panel — boundary wraps ONLY this panel so on crash the
+            mode switches to markdown and the CodeEditor below becomes visible. */}
+        {mode === 'wysiwyg' && (
+          <WysiwygErrorBoundary
+            flushRef={wysiwygRef as RefObject<WysiwygEditorHandle | null>}
+            onError={handleWysiwygError}
+          >
+            {wysiwygPanel}
+          </WysiwygErrorBoundary>
+        )}
+
+        {mode === 'markdown' && (
+          <div className="h-full overflow-hidden">
+            <CodeEditor
+              value={activeDoc.content}
+              onChange={handleContentChange}
+              language="markdown"
+              height="100%"
+              className="h-full"
+              placeholder="Write markdown here…"
+              basicSetup={{ lineNumbers: false, foldGutter: false, highlightActiveLine: true, history: true }}
+            />
+          </div>
+        )}
+
+        {mode === 'preview' && (
+          <div className="h-full overflow-y-auto px-5 py-4">
+            <MarkdownRenderer content={activeDoc.content} />
+          </div>
+        )}
+
+        {mode === 'split' && (
+          <ResizablePanelGroup
+            key={isDesktop ? 'split-h' : 'split-v'}
+            orientation={isDesktop ? 'horizontal' : 'vertical'}
+            className="h-full"
+          >
+            <ResizablePanel defaultSize={50} minSize={25}>
+              <div className="h-full overflow-hidden">
+                <CodeEditor
+                  value={activeDoc.content}
+                  onChange={handleContentChange}
+                  language="markdown"
+                  height="100%"
+                  className="h-full"
+                  placeholder="Write markdown here…"
+                  basicSetup={{ lineNumbers: false, foldGutter: false, highlightActiveLine: true, history: true }}
+                />
+              </div>
+            </ResizablePanel>
+            <ResizableHandle withHandle />
+            <ResizablePanel defaultSize={50} minSize={25}>
+              <div className="h-full overflow-y-auto px-5 py-4">
+                <MarkdownRenderer content={activeDoc.content} />
+              </div>
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        )}
+      </div>
+    </div>
+  )
+
+  // ── Full layout ────────────────────────────────────────────────────────────
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
 
-      {/* ── Desktop layout (md+): sidebar + split panes ── */}
-      <div className="hidden md:flex flex-1 min-h-0">
+      {/* Single unified layout — the only structural difference between
+          desktop and mobile is the collapsible right-panel doc list.
+          The editor area (editorArea) is rendered ONCE so exactly one
+          TipTap instance mounts, sharing a single wysiwygRef. */}
+      <div className="flex flex-1 min-h-0 overflow-hidden">
 
-        {/* Sidebar */}
-        <div className="w-48 lg:w-56 shrink-0 flex flex-col min-h-0">
-          <DocSidebar
-            docs={docs}
-            activeDocId={activeDocId}
-            onSelect={switchDoc}
-            onNew={createDoc}
-            onDelete={deleteDoc}
-            onRename={(id, title) => updateDoc(id, { title })}
-          />
-        </div>
-
-        {/* Editor + Preview split */}
-        <div className="flex-1 flex flex-col min-w-0 min-h-0">
-          {toolbar}
-
-          <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0">
-            {/* Editor */}
-            <ResizablePanel defaultSize="50" minSize="15" className="min-w-0 min-h-0 overflow-hidden">
-              {editorPane}
-            </ResizablePanel>
-
-            <ResizableHandle withHandle />
-
-            {/* Preview */}
-            <ResizablePanel defaultSize="50" minSize="15" className="min-w-0 min-h-0 overflow-hidden bg-background">
-              {previewPane}
-            </ResizablePanel>
-          </ResizablePanelGroup>
-
+        {/* CENTER: top toolbar + editor */}
+        <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+          {topToolbar}
+          {editorArea}
           <StatusBar
             text={activeDoc.content}
             model={selectedModel}
             onModelChange={setModel}
           />
         </div>
+
+        {/* RIGHT: collapsible document list — desktop only (md+) */}
+        {isDesktop && (
+          <Collapsible
+            open={docsOpen}
+            onOpenChange={setDocsOpen}
+            className="flex shrink-0"
+          >
+            {/* Collapse/expand toggle */}
+            <CollapsibleTrigger asChild>
+              <button
+                className="shrink-0 flex items-center justify-center w-5 border-l border-border bg-muted/30 hover:bg-muted/60 transition-colors text-muted-foreground hover:text-foreground"
+                title={docsOpen ? 'Hide documents' : 'Show documents'}
+                aria-label={docsOpen ? 'Hide document list' : 'Show document list'}
+              >
+                {docsOpen ? (
+                  <ChevronRight className="h-3 w-3" />
+                ) : (
+                  <ChevronLeft className="h-3 w-3" />
+                )}
+              </button>
+            </CollapsibleTrigger>
+
+            <CollapsibleContent
+              className={cn(
+                'overflow-hidden border-l border-border bg-card flex flex-col',
+                docsOpen ? 'w-44 lg:w-52' : 'w-0',
+              )}
+            >
+              <DocSidePanel
+                docs={docs}
+                activeDocId={activeDocId}
+                onSelect={switchDoc}
+                onNew={createDoc}
+                onDelete={deleteDoc}
+                onRename={(id, title) => updateDoc(id, { title })}
+              />
+            </CollapsibleContent>
+          </Collapsible>
+        )}
       </div>
 
-      {/* ── Mobile layout (<md): toolbar + tabs ── */}
-      <div className="flex md:hidden flex-col flex-1 min-h-0">
-        {toolbar}
-
-        {/* Edit / Preview tabs */}
-        <Tabs
-          value={mobileTab}
-          onValueChange={(v) => setMobileTab(v as 'edit' | 'preview')}
-          className="flex flex-col flex-1 min-h-0"
-        >
-          <TabsList className="shrink-0 w-full rounded-none border-b border-border bg-muted/40 h-9">
-            <TabsTrigger value="edit" className="flex-1 text-xs h-7">Edit</TabsTrigger>
-            <TabsTrigger value="preview" className="flex-1 text-xs h-7">Preview</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="edit" className="flex-1 min-h-0 mt-0 overflow-hidden">
-            {editorPane}
-          </TabsContent>
-
-          <TabsContent value="preview" className="flex-1 min-h-0 mt-0 overflow-hidden">
-            {previewPane}
-          </TabsContent>
-        </Tabs>
-
-        <StatusBar
-          text={activeDoc.content}
-          model={selectedModel}
-          onModelChange={setModel}
-        />
-      </div>
-
-      {/* ── History drawer (shared, works on mobile + desktop) ── */}
-      <HistoryDrawer
+      {/* History drawer — mounted once, outside the mode/layout conditionals */}
+      <VersionHistoryDrawer
         open={historyOpen}
         onOpenChange={setHistoryOpen}
         doc={activeDoc}
@@ -941,6 +991,7 @@ export default function MarkdownEditorPage() {
         onPin={(versionId, label) => pinVersion(activeDoc.id, versionId, label)}
         onDelete={(versionId) => deleteVersion(activeDoc.id, versionId)}
       />
+
     </div>
   )
 }

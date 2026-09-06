@@ -80,11 +80,12 @@ Use semantic utility classes everywhere (`bg-background`, `text-muted-foreground
 The full token set is the source of truth in `src/index.css`.
 
 Diff colours: use the `diff-insert` / `diff-delete` semantic tokens (`bg-diff-insert/10`,
-`text-diff-delete`, …) — never raw greens/reds. Used by the Visual Markdown Editor's version
+`text-diff-delete`, …) — never raw greens/reds. Used by the Markdown Editor's version
 history diff view and the Diff Viewer tool.
 
 VME version history: automatic "Before restore" snapshots are capped at 5 per doc
-(`RESTORE_SNAPSHOT_CAP`); renaming one exempts it.
+(`RESTORE_SNAPSHOT_CAP`); renaming one exempts it. (VME = legacy internal prefix for the
+Markdown Editor — folder `src/tools/writing/markdown-editor/`.)
 
 Theme choice is stored in localStorage under key `su:theme`.
 

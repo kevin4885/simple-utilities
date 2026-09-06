@@ -484,6 +484,7 @@ gravity-ui/Notion-style in-place controls.
 | plugin.ts | ProseMirror plugin — focused-table decoration, throttled hover tracking, tableControlsKey |
 | commands.ts | Pure helpers: selectRow, selectColumn, moveRow, moveColumn, isRectangularTable, getEditorTablePos |
 | TableControls.tsx | React overlay — row/column handle pills + edge "+" buttons |
+| TableControls.test.tsx | Vitest tests — destroyed/not-yet-mounted editor guard regression (see below) |
 | index.ts | tableControlsExtension TipTap Extension; re-exports tableControlsKey, setDropdownOpen, commands |
 | commands.test.ts | Vitest tests for commands + throttle utility |
 
@@ -504,6 +505,7 @@ interface TableControlsState {
 2. **Hover tracking**: throttled (100 ms) mousemove resolves the cell under the pointer via posAtCoords + walking up to tableCell/tableHeader + TableMap.findCell. Dispatches tr.setMeta(tableControlsKey, { type: 'hover', rowIdx, colIdx }). mouseleave clears after 150 ms grace.
 3. **Handle decorations**: when hover is set, Decoration.node adds data-row-handle attr to the first cell of the hovered row, and data-col-handle attr to the first-row cell in the hovered column. These are queried by TableControls.tsx to measure handle positions.
 4. **React overlay** (TableControls.tsx): subscribed to editor transaction events; re-measures rects on scroll/resize. Renders handle pills and edge "+" buttons using absolute positioning inside wysiwyg-root. Uses `getScrollParent(editor.view.dom)` (from `utils.ts`) to find the nearest scrollable ancestor — not `closest('.overflow-y-auto')` which was coupled to Tailwind class names.
+   - **`editor.isDestroyed` guard**: all `editor.view.*` access in these effects must be preceded by `if (editor.isDestroyed) return` — `useEditor`'s 1 ms `scheduleDestroy` timer can destroy the Editor instance before a sibling effect commits (StrictMode double-invoke racing a slow main thread), and `editor.view.dom` throws `[tiptap error]: ... Cannot access view['dom']` on a destroyed/not-yet-mounted editor. `nodeAt`-style position lookups use `safeNodeAt` (`commands.ts`) instead of raw `doc.nodeAt`, which throws `RangeError` on out-of-range positions. See `TableControls.test.tsx`.
 5. **Dropdown blur guard**: all handle buttons use onMouseDown={e=>e.preventDefault()} to prevent editor blur. Menus use onCloseAutoFocus to refocus the editor.
 6. **Dropdown-open freeze**: setDropdownOpen(true) is called when a row/col menu opens, so the mousemove handler ignores events while a menu is displayed.
 7. **Hover-persist fix**: when a menu closes (`onOpenChange(false)`) and the pointer is not over the editor DOM (`!editor.view.dom.matches(':hover')`), the hover-clear meta is dispatched immediately. This handles the case where the Radix dropdown portal is outside the editor DOM — the pointer never re-enters, so mousemove never fires to clear hover organically. **Manual-check note**: verified visually — no unit test because the fix depends on real pointer coordinates and DOM layout (`:hover` pseudo-class is not testable in jsdom).

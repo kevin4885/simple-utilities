@@ -25,6 +25,7 @@ import {
   moveColumn,
   isRectangularTable,
   getEditorTablePos,
+  safeNodeAt,
 } from './commands'
 
 // ---------------------------------------------------------------------------
@@ -127,6 +128,55 @@ describe('isRectangularTable', () => {
     editor = createTestEditor(TABLE_3X3)
     const tablePos = editorTablePos(editor)
     expect(isRectangularTable(editor, tablePos)).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// safeNodeAt / isRectangularTable bounds
+// ---------------------------------------------------------------------------
+
+describe('safeNodeAt / isRectangularTable bounds', () => {
+  let editor: Editor
+
+  afterEach(() => { editor?.destroy() })
+
+  it('documents TipTap behaviour: doc.nodeAt(pos > content.size) throws RangeError', () => {
+    editor = createTestEditor(TABLE_3X3)
+    const doc = editor.state.doc
+    expect(() => doc.nodeAt(doc.content.size + 10)).toThrow(RangeError)
+  })
+
+  it('safeNodeAt returns null for a position past the end of the document', () => {
+    editor = createTestEditor(TABLE_3X3)
+    const doc = editor.state.doc
+    expect(safeNodeAt(doc, doc.content.size + 10)).toBeNull()
+  })
+
+  it('safeNodeAt returns null for a negative position', () => {
+    editor = createTestEditor(TABLE_3X3)
+    const doc = editor.state.doc
+    expect(safeNodeAt(doc, -1)).toBeNull()
+  })
+
+  it('safeNodeAt returns the table node for a valid tablePos', () => {
+    editor = createTestEditor(TABLE_3X3)
+    const doc = editor.state.doc
+    const tablePos = editorTablePos(editor)
+    const node = safeNodeAt(doc, tablePos)
+    expect(node).not.toBeNull()
+    expect(node!.type.name).toBe('table')
+  })
+
+  it('isRectangularTable(editor, 999999) returns false without throwing', () => {
+    editor = createTestEditor(TABLE_3X3)
+    expect(() => isRectangularTable(editor, 999999)).not.toThrow()
+    expect(isRectangularTable(editor, 999999)).toBe(false)
+  })
+
+  it('isRectangularTable(editor, -1) returns false without throwing', () => {
+    editor = createTestEditor(TABLE_3X3)
+    expect(() => isRectangularTable(editor, -1)).not.toThrow()
+    expect(isRectangularTable(editor, -1)).toBe(false)
   })
 })
 

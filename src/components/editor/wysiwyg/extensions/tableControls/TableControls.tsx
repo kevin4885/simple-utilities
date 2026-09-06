@@ -67,6 +67,7 @@ import {
   moveRow,
   moveColumn,
   isRectangularTable,
+  safeNodeAt,
 } from './commands'
 import { TableMap } from '@tiptap/pm/tables'
 import { getScrollParent } from '../../utils'
@@ -105,6 +106,10 @@ function measureTableRects(
   tablePos: number | null,
 ): Pick<OverlayState, 'table' | 'rowHandle' | 'colHandle'> {
   if (tablePos === null) return { table: null, rowHandle: null, colHandle: null }
+
+  // editor may be destroyed by useEditor's 1 ms scheduleDestroy before this
+  // callback runs — see TableControls.test.tsx.
+  if (editor.isDestroyed) return { table: null, rowHandle: null, colHandle: null }
 
   const root = editor.view.dom.closest('.wysiwyg-root') as HTMLElement | null
   if (!root) return { table: null, rowHandle: null, colHandle: null }
@@ -185,7 +190,9 @@ export function TableControls({ editor }: TableControlsProps) {
 
   // Subscribe to plugin state — setState called inside the subscription callback
   useEffect(() => {
-    if (!editor) return
+    // editor may be destroyed by useEditor's 1 ms scheduleDestroy before this
+    // effect commits — see TableControls.test.tsx.
+    if (!editor || editor.isDestroyed) return
     const onTransaction = () => {
       const pluginState = tableControlsKey.getState(editor.state) ?? null
       const tablePos = pluginState?.tablePos ?? null
@@ -198,6 +205,10 @@ export function TableControls({ editor }: TableControlsProps) {
 
   // Re-measure on scroll and resize — setState called inside event callbacks
   useEffect(() => {
+    // editor may be destroyed by useEditor's 1 ms scheduleDestroy before this
+    // effect commits — see TableControls.test.tsx.
+    if (editor.isDestroyed) return
+
     const scrollContainer = getScrollParent(editor.view.dom) as HTMLElement | null
     const target = scrollContainer ?? editor.view.dom.parentElement
 
@@ -290,7 +301,7 @@ export function TableControls({ editor }: TableControlsProps) {
   const { tablePos } = pluginState
 
   // Table dimensions for disabling move items
-  const tableNode = editor.state.doc.nodeAt(tablePos)
+  const tableNode = safeNodeAt(editor.state.doc, tablePos)
   const map = tableNode
     ? (() => { try { return TableMap.get(tableNode) } catch { return null } })()
     : null

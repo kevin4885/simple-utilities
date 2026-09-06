@@ -29,6 +29,7 @@
  */
 
 import type { Editor } from '@tiptap/core'
+import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import {
   CellSelection,
   TableMap,
@@ -36,6 +37,20 @@ import {
   moveTableColumn,
 } from '@tiptap/pm/tables'
 import { getTablePos } from './plugin'
+
+// ---------------------------------------------------------------------------
+// safeNodeAt — doc.nodeAt that never throws
+// ---------------------------------------------------------------------------
+
+/** doc.nodeAt that never throws — returns null for out-of-range / invalid positions. */
+export function safeNodeAt(doc: ProseMirrorNode, pos: number): ProseMirrorNode | null {
+  if (!Number.isInteger(pos) || pos < 0 || pos > doc.content.size) return null
+  try {
+    return doc.nodeAt(pos)
+  } catch {
+    return null
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Select a whole row
@@ -47,7 +62,7 @@ import { getTablePos } from './plugin'
  */
 export function selectRow(editor: Editor, tablePos: number, rowIdx: number): boolean {
   const { state, dispatch } = editor.view
-  const tableNode = state.doc.nodeAt(tablePos)
+  const tableNode = safeNodeAt(state.doc, tablePos)
   if (!tableNode) return false
 
   try {
@@ -83,7 +98,7 @@ export function selectRow(editor: Editor, tablePos: number, rowIdx: number): boo
  */
 export function selectColumn(editor: Editor, tablePos: number, colIdx: number): boolean {
   const { state, dispatch } = editor.view
-  const tableNode = state.doc.nodeAt(tablePos)
+  const tableNode = safeNodeAt(state.doc, tablePos)
   if (!tableNode) return false
 
   try {
@@ -119,7 +134,7 @@ export function selectColumn(editor: Editor, tablePos: number, colIdx: number): 
  * GFM tables are always rectangular, but we guard defensively.
  */
 export function isRectangularTable(editor: Editor, tablePos: number): boolean {
-  const tableNode = editor.view.state.doc.nodeAt(tablePos)
+  const tableNode = safeNodeAt(editor.view.state.doc, tablePos)
   if (!tableNode) return false
   try {
     const map = TableMap.get(tableNode)
@@ -156,7 +171,7 @@ export function moveRow(
   if (fromIdx === 0 || toIdx === 0) return false
 
   const { state, dispatch } = editor.view
-  const tableNode = state.doc.nodeAt(tablePos)
+  const tableNode = safeNodeAt(state.doc, tablePos)
   if (!tableNode) return false
 
   try {
@@ -193,7 +208,7 @@ export function moveColumn(
   if (!isRectangularTable(editor, tablePos)) return false
 
   const { state, dispatch } = editor.view
-  const tableNode = state.doc.nodeAt(tablePos)
+  const tableNode = safeNodeAt(state.doc, tablePos)
   if (!tableNode) return false
 
   try {

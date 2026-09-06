@@ -49,6 +49,7 @@ src/
     registry.ts     # THE source of truth for all tools, routes, and nav
     <category>/
       <tool-id>/    # One folder per tool — see src/tools/CLAUDE.md for the pattern
+      writing/markdown-editor/export/  # export pipeline (pure builders + exportIo.ts) — reference pattern for export in any tool
   main.tsx
   index.css         # Tailwind v4 @import + @theme inline + OKLCH tokens
 ```

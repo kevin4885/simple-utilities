@@ -57,6 +57,23 @@ migrate it once in the tool's `logic.ts` — see `migrateLegacyStorage` in
 
 ---
 
+## Export pattern (pure builder + thin I/O)
+
+If a tool needs to export its content as a file, clipboard payload, or
+printed document, follow the reference implementation in
+`writing/markdown-editor/export/`: put every byte-producing function in a
+pure module (`exportOptions.ts`, `exportStyles.ts`, `exportComponents.tsx`,
+`exportHtml.tsx` — React-free except for `renderToStaticMarkup`) and keep all
+side-effecting I/O (Blob download, clipboard write, print iframe) in a single
+thin `exportIo.ts`. The UI (`ExportMenu.tsx` / `ExportDialog.tsx`) only wires
+the two together — it never builds HTML/markdown itself and never touches
+`localStorage` directly (styling options persist through the tool's own
+store, e.g. `exportPrefs` + `setExportPrefs`). This keeps the builders trivial
+to unit-test (no DOM, no clipboard, no iframe) and the I/O wrappers testable
+with light stubbing.
+
+---
+
 ## Step 3 — Write logic tests first (TDD recommended)
 
 Add tests in `logic.test.ts` before wiring up the UI:

@@ -14,10 +14,17 @@ import VisualMarkdownEditorPage from './index'
 import { useVmeStore, type VmeDoc } from './store'
 
 // ---------------------------------------------------------------------------
-// Mocks — heavy editors + media query
+// Mocks — heavy editors + media query + export I/O
 // ---------------------------------------------------------------------------
 
 const flushMock = vi.fn()
+const downloadTextMock = vi.fn()
+
+vi.mock('./export/exportIo', () => ({
+  downloadText: (...args: unknown[]) => downloadTextMock(...args),
+  copyRichText: vi.fn().mockResolvedValue('rich'),
+  printHtml: vi.fn().mockResolvedValue(undefined),
+}))
 
 vi.mock('@/components/editor/WysiwygEditor', () => {
   const MockWysiwygEditor = forwardRef<{ flush: () => void }, { value: string; onChange: (v: string) => void }>(
@@ -71,6 +78,7 @@ function makeDoc(overrides: Partial<VmeDoc> = {}): VmeDoc {
 
 beforeEach(() => {
   flushMock.mockClear()
+  downloadTextMock.mockClear()
   useVmeStore.setState({
     docs: [makeDoc()],
     activeDocId: 'doc1',
@@ -153,5 +161,20 @@ describe('VisualMarkdownEditorPage — version history wiring', () => {
     fireEvent.click(within(screen.getByText('Doc B').closest('div')!).getByText('Doc B'))
 
     expect(screen.queryByText('Version History')).not.toBeInTheDocument()
+  })
+})
+
+describe('VisualMarkdownEditorPage — export wiring', () => {
+  it('Export → Markdown (.md) flushes the wysiwyg editor first when in wysiwyg mode', async () => {
+    useVmeStore.setState({ editorMode: 'wysiwyg' })
+    render(<VisualMarkdownEditorPage />)
+
+    await userEvent.click(screen.getByLabelText('Export'))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Markdown (.md)' }))
+
+    expect(flushMock).toHaveBeenCalled()
+    expect(downloadTextMock).toHaveBeenCalledTimes(1)
+    const [, , content] = downloadTextMock.mock.calls[0]
+    expect(content).toBe('hello')
   })
 })

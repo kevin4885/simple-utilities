@@ -39,6 +39,19 @@
  *   Ctrl+Alt+P / Cmd+Alt+P — toggles between current editing mode and 'preview'
  *   (remembers previous mode to return to).
  *
+ * Export:
+ *   The toolbar's "Export ▾" menu (`./export/ExportMenu.tsx`) offers Markdown
+ *   (.md), Plain text (.txt), Copy as rich text, and — via `./export/ExportDialog.tsx`
+ *   — HTML (.html) and PDF (browser print dialog). Every export action calls
+ *   `flushEditor()` FIRST (same flush discipline as the History drawer) so the
+ *   last keystrokes are captured, then reads `useVmeStore.getState()` (not a
+ *   stale closure) for the freshly-flushed content. Styling options
+ *   (preset/paper/margins/title block/link URLs/page-break-per-H1) persist in
+ *   the store as `exportPrefs` (`setExportPrefs`). All bytes are produced by
+ *   pure builders in `./export/` (`exportOptions.ts`, `exportStyles.ts`,
+ *   `exportComponents.tsx`, `exportHtml.tsx`) — this page and `./export/exportIo.ts`
+ *   only move those bytes around (download / clipboard / print iframe).
+ *
  * Layout:
  *   Desktop (md+):
  *     [Center: mode switcher + editor area] [Right: collapsible doc list]
@@ -62,7 +75,6 @@ import {
   Copy,
   Check,
   FileText,
-  Download,
   Pencil,
   PanelLeft,
   Layers,
@@ -108,13 +120,13 @@ import CodeEditor from '@/components/editor/CodeEditor'
 import MarkdownRenderer from '@/components/editor/MarkdownRenderer'
 import { WysiwygErrorBoundary } from '@/components/editor/wysiwyg/WysiwygErrorBoundary'
 import VersionHistoryDrawer from './history/VersionHistoryDrawer'
+import ExportMenu from './export/ExportMenu'
 import {
   countTokensGpt,
   countTokensApprox,
   countWords,
   countChars,
   countLines,
-  toSafeFilename,
   KEYBOARD_SHORTCUTS,
   EDITOR_MODES,
 } from './logic'
@@ -519,6 +531,7 @@ export default function VisualMarkdownEditorPage() {
     selectedModel,
     editorMode,
     hintDismissed,
+    exportPrefs,
     createDoc,
     deleteDoc,
     updateDoc,
@@ -530,6 +543,7 @@ export default function VisualMarkdownEditorPage() {
     pinVersion,
     setEditorMode,
     dismissHint,
+    setExportPrefs,
   } = useVmeStore()
 
   const activeDoc = docs.find((d) => d.id === activeDocId) ?? docs[0]
@@ -670,18 +684,6 @@ export default function VisualMarkdownEditorPage() {
     [activeDocId, mode, setActiveDoc, saveVersion],
   )
 
-  // ── Download ───────────────────────────────────────────────────────────────
-
-  function handleDownload() {
-    const blob = new Blob([activeDoc.content], { type: 'text/markdown' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${toSafeFilename(activeDoc.title) || 'document'}.md`
-    a.click()
-    URL.revokeObjectURL(url)
-  }
-
   // ── Ctrl+Alt+P / Cmd+Alt+P — toggle preview ────────────────────────────────
   //
   // Ctrl+Shift+P is Firefox's non-preventable "New Private Window" shortcut,
@@ -781,19 +783,18 @@ export default function VisualMarkdownEditorPage() {
 
       <Separator orientation="vertical" className="h-5 mx-0.5 hidden sm:block" />
 
-      {/* Copy + Download + Shortcuts */}
+      {/* Copy + Export + Shortcuts */}
       <CopyButton getText={() => activeDoc.content} label="Copy markdown" />
-      <Button
-        variant="ghost"
-        size="sm"
-        className="h-7 gap-1.5 text-xs shrink-0"
-        onClick={handleDownload}
-        title="Download as .md"
-        aria-label="Download as .md"
-      >
-        <Download className="h-3.5 w-3.5" />
-        <span className="hidden sm:inline">.md</span>
-      </Button>
+      <ExportMenu
+        title={activeDoc.title}
+        exportPrefs={exportPrefs}
+        onPrefsChange={setExportPrefs}
+        onBeforeExport={flushEditor}
+        getContent={() => {
+          const s = useVmeStore.getState()
+          return (s.docs.find((d) => d.id === s.activeDocId) ?? s.docs[0]).content
+        }}
+      />
       <Button
         variant="ghost"
         size="icon"

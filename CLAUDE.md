@@ -83,6 +83,9 @@ Diff colours: use the `diff-insert` / `diff-delete` semantic tokens (`bg-diff-in
 `text-diff-delete`, …) — never raw greens/reds. Used by the Visual Markdown Editor's version
 history diff view and the Diff Viewer tool.
 
+VME version history: automatic "Before restore" snapshots are capped at 5 per doc
+(`RESTORE_SNAPSHOT_CAP`); renaming one exempts it.
+
 Theme choice is stored in localStorage under key `su:theme`.
 
 ### Dark-mode borders (`--border` vs `--input`)

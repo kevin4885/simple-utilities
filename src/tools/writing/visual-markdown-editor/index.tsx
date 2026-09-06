@@ -30,6 +30,10 @@
  *   later. Restore only writes `doc.content` in the store — it never touches
  *   CodeMirror/TipTap internals; WysiwygEditor's external-value sync effect
  *   and CodeEditor's `value` prop pick up the new content in every mode.
+ *   `handleContentChange` early-returns when the incoming content equals the
+ *   store's current content, so a flush that carries no real edit (drawer
+ *   open, Save now, Restore, mode/doc switch) never bumps `updatedAt` or
+ *   arms the inactivity timer.
  *
  * Keyboard shortcuts:
  *   Ctrl+Alt+P / Cmd+Alt+P — toggles between current editing mode and 'preview'
@@ -601,6 +605,10 @@ export default function VisualMarkdownEditorPage() {
   // ── Content change handler ─────────────────────────────────────────────────
 
   function handleContentChange(content: string) {
+    // Flushes (drawer open, save, restore, mode/doc switch) re-emit the current
+    // markdown; skip when unchanged so updatedAt and the inactivity timer are
+    // untouched.
+    if (content === activeDoc.content) return
     updateDoc(activeDoc.id, { content })
     if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current)
     inactivityTimerRef.current = setTimeout(() => {

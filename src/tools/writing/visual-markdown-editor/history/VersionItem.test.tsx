@@ -109,4 +109,19 @@ describe('VersionItem', () => {
     await userEvent.click(screen.getByTitle('Delete this version'))
     expect(onDelete).toHaveBeenCalledTimes(1)
   })
+
+  it('actions are keyboard-reachable: visible on focus-within and in tab order after the row button', async () => {
+    const user = userEvent.setup()
+    render(
+      <VersionItem version={makeVersion()} onOpen={vi.fn()} onRestore={vi.fn()} onPin={vi.fn()} onDelete={vi.fn()} />,
+    )
+    const actionsContainer = screen.getByTitle('Restore this version').parentElement
+    expect(actionsContainer).toHaveClass('group-focus-within:opacity-100')
+
+    // Tab from the row-open button should reach the Restore button next.
+    const rowButton = screen.getByText('1 min ago').closest('button')
+    rowButton?.focus()
+    await user.tab()
+    expect(document.activeElement).toHaveTextContent('Restore')
+  })
 })

@@ -1,66 +1,30 @@
 /**
- * visual-markdown-editor/store.test.ts
+ * markdown-editor/store.test.ts
  *
- * Tests for the VME Zustand store's merge/rehydration behaviour.
+ * Tests for the VME Zustand store's merge/rehydration behaviour, using the
+ * real `mergePersisted` exported from store.ts (not a re-implementation —
+ * see Phase 02 Conventions: exporting the merge helper avoids duplicating
+ * the merge logic in the test file).
  *
  * Covers:
- *   (a) Legacy persisted state without editorMode/hintDismissed → defaults
- *       to 'wysiwyg' / false (backward compatibility).
+ *   (a) Legacy persisted state without editorMode/hintDismissed/exportPrefs
+ *       → defaults ('wysiwyg' / false / DEFAULT_EXPORT_OPTIONS).
  *   (b) Invalid editorMode value (e.g. 'bogus') → rejected/defaulted, no crash.
  *   (c) 'split' persists correctly and merges back.
  *   (d) Existing docs/content survive the merge unchanged.
- *
- * Note: we test the merge function in isolation (extracted from the persist
- * config) rather than the live store to avoid localStorage side-effects and
- * zustand init ordering. We replicate the merge logic from store.ts directly.
+ *   (e) exportPrefs: absent → defaults; partial → merged over defaults;
+ *       invalid → per-field fallback (via resolveExportOptions).
  */
 
 import { describe, it, expect } from 'vitest'
-import { z } from 'zod'
+import { mergePersisted, useVmeStore, type VmeDoc } from './store'
+import { DEFAULT_EXPORT_OPTIONS } from './export/exportOptions'
 
 // ---------------------------------------------------------------------------
-// Re-implement the merge/parse logic from store.ts so we can test it purely.
-// This is the exact logic used by the 'merge' option in the persist config.
+// Helpers
 // ---------------------------------------------------------------------------
 
-const VersionSchema = z.object({
-  id: z.string().min(1),
-  content: z.string(),
-  savedAt: z.number(),
-  label: z.string().optional(),
-  auto: z.boolean(),
-})
-
-const DocSchema = z.object({
-  id: z.string().min(1),
-  title: z.string().min(1),
-  content: z.string(),
-  updatedAt: z.number(),
-  versions: z.array(VersionSchema).default([]),
-})
-
-const ModelSchema = z.enum(['gpt4o', 'claude', 'gemini'])
-const EditorModeSchema = z.enum(['wysiwyg', 'markdown', 'preview', 'split'])
-
-const PersistedSchema = z.object({
-  docs: z.array(DocSchema).min(1),
-  activeDocId: z.string().min(1),
-  selectedModel: ModelSchema,
-  editorMode: EditorModeSchema.optional(),
-  hintDismissed: z.boolean().optional(),
-})
-
-type VmeEditorMode = 'wysiwyg' | 'markdown' | 'preview' | 'split'
-
-interface MergedState {
-  docs: z.infer<typeof DocSchema>[]
-  activeDocId: string
-  selectedModel: z.infer<typeof ModelSchema>
-  editorMode: VmeEditorMode
-  hintDismissed: boolean
-}
-
-function makeDefaultDoc() {
+function makeDefaultDoc(): VmeDoc {
   return {
     id: 'default-id',
     title: 'Untitled 1',
@@ -70,31 +34,17 @@ function makeDefaultDoc() {
   }
 }
 
-function makeCurrent(overrides: Partial<MergedState> = {}): MergedState {
+function makeCurrent(overrides: Partial<ReturnType<typeof useVmeStore.getState>> = {}) {
   const doc = makeDefaultDoc()
   return {
+    ...useVmeStore.getState(),
     docs: [doc],
     activeDocId: doc.id,
-    selectedModel: 'gpt4o',
-    editorMode: 'wysiwyg',
+    selectedModel: 'gpt4o' as const,
+    editorMode: 'wysiwyg' as const,
     hintDismissed: false,
+    exportPrefs: DEFAULT_EXPORT_OPTIONS,
     ...overrides,
-  }
-}
-
-/** Replicate the merge() function from store.ts */
-function mergePersisted(persisted: unknown, current: MergedState): MergedState {
-  const result = PersistedSchema.safeParse(persisted)
-  if (!result.success) return current
-  const { docs, activeDocId, selectedModel, editorMode, hintDismissed } = result.data
-  const validId = docs.find((d) => d.id === activeDocId) ? activeDocId : docs[0].id
-  return {
-    ...current,
-    docs,
-    activeDocId: validId,
-    selectedModel,
-    editorMode: editorMode ?? 'wysiwyg',
-    hintDismissed: hintDismissed ?? false,
   }
 }
 
@@ -109,7 +59,7 @@ describe('VME store merge — legacy state without editorMode/hintDismissed', ()
       docs: [doc],
       activeDocId: 'doc1',
       selectedModel: 'gpt4o',
-      // no editorMode, no hintDismissed
+      // no editorMode, no hintDismissed, no exportPrefs
     }
     const current = makeCurrent()
     const merged = mergePersisted(legacy, current)
@@ -123,6 +73,13 @@ describe('VME store merge — legacy state without editorMode/hintDismissed', ()
     const current = makeCurrent()
     const merged = mergePersisted(legacy, current)
     expect(merged.hintDismissed).toBe(false)
+  })
+
+  it('(a)/(e) loads with DEFAULT_EXPORT_OPTIONS when exportPrefs is absent', () => {
+    const doc = { id: 'doc1', title: 'My Doc', content: '', updatedAt: 1000, versions: [] }
+    const legacy = { docs: [doc], activeDocId: 'doc1', selectedModel: 'gpt4o' }
+    const merged = mergePersisted(legacy, makeCurrent())
+    expect(merged.exportPrefs).toEqual(DEFAULT_EXPORT_OPTIONS)
   })
 })
 
@@ -218,5 +175,94 @@ describe('VME store merge — completely invalid input', () => {
   it('docs array empty returns current unchanged', () => {
     const current = makeCurrent()
     expect(mergePersisted({ docs: [], activeDocId: 'x', selectedModel: 'gpt4o' }, current)).toBe(current)
+  })
+})
+
+describe('VME store merge — exportPrefs', () => {
+  const doc = { id: 'doc1', title: 'Doc', content: '', updatedAt: 0, versions: [] }
+
+  it('(e) partial exportPrefs merges over defaults', () => {
+    const persisted = {
+      docs: [doc],
+      activeDocId: 'doc1',
+      selectedModel: 'gpt4o',
+      exportPrefs: { paper: 'a4' },
+    }
+    const merged = mergePersisted(persisted, makeCurrent())
+    expect(merged.exportPrefs).toEqual({ ...DEFAULT_EXPORT_OPTIONS, paper: 'a4' })
+  })
+
+  it('(e) a docs load and exportPrefs with an invalid field falls back per-field, valid siblings kept', () => {
+    const persisted = {
+      docs: [doc],
+      activeDocId: 'doc1',
+      selectedModel: 'gpt4o',
+      exportPrefs: { preset: 'bogus', paper: 'a4' },
+    }
+    const current = makeCurrent()
+    const merged = mergePersisted(persisted, current)
+    // docs are NOT lost/overwritten with the fresh fallback state
+    expect(merged.docs).toEqual([doc])
+    expect(merged.activeDocId).toBe('doc1')
+    expect(merged.exportPrefs.preset).toBe(DEFAULT_EXPORT_OPTIONS.preset)
+    expect(merged.exportPrefs.paper).toBe('a4')
+  })
+
+  it('(e) a wholly garbage exportPrefs value (string) still loads docs, falls back to defaults', () => {
+    const persisted = {
+      docs: [doc],
+      activeDocId: 'doc1',
+      selectedModel: 'gpt4o',
+      exportPrefs: 'garbage-string',
+    }
+    const merged = mergePersisted(persisted, makeCurrent())
+    expect(merged.docs).toEqual([doc])
+    expect(merged.exportPrefs).toEqual(DEFAULT_EXPORT_OPTIONS)
+  })
+
+  it('(e) a wholly garbage exportPrefs value (number) still loads docs, falls back to defaults', () => {
+    const persisted = {
+      docs: [doc],
+      activeDocId: 'doc1',
+      selectedModel: 'gpt4o',
+      exportPrefs: 42,
+    }
+    const merged = mergePersisted(persisted, makeCurrent())
+    expect(merged.docs).toEqual([doc])
+    expect(merged.exportPrefs).toEqual(DEFAULT_EXPORT_OPTIONS)
+  })
+
+  it('(e) full valid exportPrefs is preserved as-is', () => {
+    const prefs = { preset: 'github', paper: 'a4', margins: 'narrow', titleBlock: true, showLinkUrls: false, pageBreakH1: true }
+    const persisted = { docs: [doc], activeDocId: 'doc1', selectedModel: 'gpt4o', exportPrefs: prefs }
+    const merged = mergePersisted(persisted, makeCurrent())
+    expect(merged.exportPrefs).toEqual(prefs)
+  })
+})
+
+describe('VME store — setExportPrefs action', () => {
+  it('changes only the given field, leaving siblings untouched', () => {
+    useVmeStore.setState({ exportPrefs: DEFAULT_EXPORT_OPTIONS })
+    useVmeStore.getState().setExportPrefs({ paper: 'a4' })
+    const prefs = useVmeStore.getState().exportPrefs
+    expect(prefs.paper).toBe('a4')
+    expect(prefs.preset).toBe(DEFAULT_EXPORT_OPTIONS.preset)
+    expect(prefs.margins).toBe(DEFAULT_EXPORT_OPTIONS.margins)
+  })
+
+  it('can patch multiple fields at once', () => {
+    useVmeStore.setState({ exportPrefs: DEFAULT_EXPORT_OPTIONS })
+    useVmeStore.getState().setExportPrefs({ titleBlock: true, pageBreakH1: true })
+    const prefs = useVmeStore.getState().exportPrefs
+    expect(prefs.titleBlock).toBe(true)
+    expect(prefs.pageBreakH1).toBe(true)
+    expect(prefs.showLinkUrls).toBe(DEFAULT_EXPORT_OPTIONS.showLinkUrls)
+  })
+
+  it('an invalid patch value (e.g. ToggleGroup deselect emitting "") leaves the field unchanged', () => {
+    useVmeStore.setState({ exportPrefs: DEFAULT_EXPORT_OPTIONS })
+    useVmeStore.getState().setExportPrefs({ preset: '' as never })
+    const prefs = useVmeStore.getState().exportPrefs
+    expect(prefs.preset).toBe(DEFAULT_EXPORT_OPTIONS.preset)
   })
 })

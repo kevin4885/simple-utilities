@@ -21,6 +21,11 @@ import {
   STORAGE_KEY,
   migrateLegacyStorage,
 } from './logic'
+import {
+  DEFAULT_EXPORT_OPTIONS,
+  resolveExportOptions,
+  type ExportOptions,
+} from './export/exportOptions'
 
 // ---------------------------------------------------------------------------
 // Schema (Zod — validates on rehydrate)
@@ -56,6 +61,10 @@ const PersistedSchema = z.object({
   editorMode: EditorModeSchema.optional(),
   /** Whether the empty-doc first-run hint has been dismissed (Phase 4). */
   hintDismissed: z.boolean().optional(),
+  /** Export styling preferences (Phase 02). Validated per-field via `resolveExportOptions`
+   *  in `mergePersisted` — never schema-validated here, so one invalid/legacy field can
+   *  never fail the whole `PersistedSchema` parse and wipe docs/version history. */
+  exportPrefs: z.unknown().optional(),
 })
 
 export type VmeVersion = z.infer<typeof VersionSchema>
@@ -75,6 +84,8 @@ interface VmeState {
   editorMode: VmeEditorMode
   /** Whether the first-run hint has been dismissed. */
   hintDismissed: boolean
+  /** Export styling preferences (preset/paper/margins/title block/link URLs/page-break-per-H1). */
+  exportPrefs: ExportOptions
 
   createDoc:   () => void
   deleteDoc:   (id: string) => void
@@ -83,6 +94,8 @@ interface VmeState {
   setModel:    (m: VmeModel) => void
   setEditorMode: (mode: VmeEditorMode) => void
   dismissHint:   () => void
+  /** Shallow-merge a patch into `exportPrefs` (e.g. `setExportPrefs({ paper: 'a4' })`). */
+  setExportPrefs: (patch: Partial<ExportOptions>) => void
 
   /**
    * Capture the current content of `docId` as a new version entry.
@@ -120,9 +133,16 @@ function makeDoc(title: string): VmeDoc {
   }
 }
 
-function fallbackState(): Pick<VmeState, 'docs' | 'activeDocId' | 'selectedModel' | 'editorMode' | 'hintDismissed'> {
+function fallbackState(): Pick<VmeState, 'docs' | 'activeDocId' | 'selectedModel' | 'editorMode' | 'hintDismissed' | 'exportPrefs'> {
   const doc = makeDoc('Untitled 1')
-  return { docs: [doc], activeDocId: doc.id, selectedModel: 'gpt4o', editorMode: 'wysiwyg', hintDismissed: false }
+  return {
+    docs: [doc],
+    activeDocId: doc.id,
+    selectedModel: 'gpt4o',
+    editorMode: 'wysiwyg',
+    hintDismissed: false,
+    exportPrefs: DEFAULT_EXPORT_OPTIONS,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -132,6 +152,32 @@ function fallbackState(): Pick<VmeState, 'docs' | 'activeDocId' | 'selectedModel
 // ---------------------------------------------------------------------------
 
 if (typeof window !== 'undefined' && window.localStorage) migrateLegacyStorage(window.localStorage)
+
+// ---------------------------------------------------------------------------
+// Persisted-state merge (pure — exported for direct unit testing without
+// touching localStorage or zustand init ordering; see store.test.ts).
+// ---------------------------------------------------------------------------
+
+export function mergePersisted(persisted: unknown, current: VmeState): VmeState {
+  const result = PersistedSchema.safeParse(persisted)
+  if (!result.success) return current
+  const { docs, activeDocId, selectedModel, editorMode, hintDismissed, exportPrefs } = result.data
+  const validId = docs.find((d) => d.id === activeDocId) ? activeDocId : docs[0].id
+  return {
+    ...current,
+    docs,
+    activeDocId: validId,
+    selectedModel,
+    // Phase 4 fields: fall back to defaults if missing from old persisted state
+    editorMode: editorMode ?? 'wysiwyg',
+    hintDismissed: hintDismissed ?? false,
+    // exportPrefs is intentionally NOT part of PersistedSchema's validated shape —
+    // resolveExportOptions is per-field tolerant, so one bad/legacy field (or a
+    // wholly garbage value) falls back to its default without ever failing the
+    // outer safeParse and losing docs/version history.
+    exportPrefs: resolveExportOptions(exportPrefs),
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Store
@@ -179,6 +225,13 @@ export const useVmeStore = create<VmeState>()(
 
       dismissHint() {
         set({ hintDismissed: true })
+      },
+
+      setExportPrefs(patch: Partial<ExportOptions>) {
+        // Resolve per-field so an invalid patch value (e.g. a ToggleGroup
+        // deselect emitting '') can never enter state — it keeps the
+        // previous/default value for that field instead.
+        set((s) => ({ exportPrefs: resolveExportOptions({ ...s.exportPrefs, ...patch }) }))
       },
 
       saveVersion(docId: string, opts = {}) {
@@ -262,21 +315,7 @@ export const useVmeStore = create<VmeState>()(
     }),
     {
       name: STORAGE_KEY,
-      merge(persisted, current) {
-        const result = PersistedSchema.safeParse(persisted)
-        if (!result.success) return current
-        const { docs, activeDocId, selectedModel, editorMode, hintDismissed } = result.data
-        const validId = docs.find((d) => d.id === activeDocId) ? activeDocId : docs[0].id
-        return {
-          ...current,
-          docs,
-          activeDocId: validId,
-          selectedModel,
-          // Phase 4 fields: fall back to defaults if missing from old persisted state
-          editorMode: editorMode ?? 'wysiwyg',
-          hintDismissed: hintDismissed ?? false,
-        }
-      },
+      merge: mergePersisted,
     },
   ),
 )

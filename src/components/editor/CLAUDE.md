@@ -10,6 +10,7 @@ These are hand-rolled app components — **not** shadcn/ui (which lives in `src/
 |---|---|
 | `CodeEditor.tsx` | `<CodeEditor>` — CodeMirror 6 editor, multi-language, themed, dark-aware |
 | `MarkdownRenderer.tsx` | `<MarkdownRenderer>` — react-markdown with GFM + syntax-highlighted code blocks |
+| `prismLanguages.ts` | Shared PrismLight instance + registered languages (`SyntaxHighlighter`, `SUPPORTED_LANGUAGES`, `resolveHighlightLanguage`) — single source of truth used by both `MarkdownRenderer.tsx` (in-app preview) and the Markdown Editor's export builders (`src/tools/writing/markdown-editor/export/exportComponents.tsx`), so exported HTML matches the app preview |
 | `WysiwygEditor.tsx` | Re-export shim → `./wysiwyg/WysiwygEditor` (backward compat; all imports work unchanged) |
 | `wysiwyg/` | **All WYSIWYG implementation** — see layout table below |
 
@@ -95,8 +96,9 @@ import MarkdownRenderer from '@/components/editor/MarkdownRenderer'
 ### Key notes
 - **Empty state** is built-in: when `content` is empty/whitespace, renders a centred
   `FileText` icon + the `emptyMessage` label. Wrap in `h-full` to vertically centre it.
-- Prism languages registered at **module level** (idempotent) — safe to import in
-  multiple tools without double-registration side effects.
+- Prism languages registered at **module level** (idempotent) via `./prismLanguages.ts` — safe to
+  import in multiple tools without double-registration side effects. The Markdown Editor's export
+  builders import the same module so exported HTML matches the preview exactly.
 - `MD_COMPONENTS` is rebuilt only when dark mode flips (`useMemo`) — react-markdown
   does not re-parse unchanged content on unrelated parent re-renders.
 - Code block themes: `vsc-dark-plus` (dark) / `one-light` (light) — matches `CodeEditor`.
@@ -465,8 +467,9 @@ TipTap v3's `BubbleMenu` uses **@floating-ui/dom** for positioning. Prop: `optio
 
 **CodeEditor:** add to `LANG_EXTENSIONS` map in `CodeEditor.tsx`.
 
-**MarkdownRenderer:** add to `SUPPORTED_LANGUAGES` set and register with
-`SyntaxHighlighter.registerLanguage(...)` at the top of `MarkdownRenderer.tsx`.
+**MarkdownRenderer / export builders:** add to `SUPPORTED_LANGUAGES` set and register with
+`SyntaxHighlighter.registerLanguage(...)` in `prismLanguages.ts` (shared by both consumers —
+do not register languages directly in `MarkdownRenderer.tsx` or the export builders anymore).
 
 **WysiwygEditor:** no config needed — code blocks render as `<pre class="wysiwyg-code-block">`.
 

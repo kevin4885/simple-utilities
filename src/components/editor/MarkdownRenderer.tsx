@@ -13,7 +13,8 @@
  *   - All colours use semantic Tailwind tokens — never raw hex values
  *   - Dark mode tracked internally via MutationObserver — no prop needed
  *   - MD_COMPONENTS rebuilt only when dark mode flips (useMemo)
- *   - Prism languages registered once at module level (idempotent)
+ *   - Prism languages registered once at module level (idempotent) — see
+ *     `./prismLanguages.ts`, shared with the Markdown Editor's export builders
  *
  * Empty state:
  *   When `content` is empty/whitespace, renders a centred FileText icon
@@ -24,46 +25,11 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { PrismLight as SyntaxHighlighter } from 'react-syntax-highlighter'
 import vscDarkPlus from 'react-syntax-highlighter/dist/esm/styles/prism/vsc-dark-plus'
 import oneLight    from 'react-syntax-highlighter/dist/esm/styles/prism/one-light'
-import langBash       from 'react-syntax-highlighter/dist/esm/languages/prism/bash'
-import langCss        from 'react-syntax-highlighter/dist/esm/languages/prism/css'
-import langHtml       from 'react-syntax-highlighter/dist/esm/languages/prism/markup'
-import langJson       from 'react-syntax-highlighter/dist/esm/languages/prism/json'
-import langJs         from 'react-syntax-highlighter/dist/esm/languages/prism/javascript'
-import langJsx        from 'react-syntax-highlighter/dist/esm/languages/prism/jsx'
-import langMarkdown   from 'react-syntax-highlighter/dist/esm/languages/prism/markdown'
-import langPython     from 'react-syntax-highlighter/dist/esm/languages/prism/python'
-import langSql        from 'react-syntax-highlighter/dist/esm/languages/prism/sql'
-import langTs         from 'react-syntax-highlighter/dist/esm/languages/prism/typescript'
-import langTsx        from 'react-syntax-highlighter/dist/esm/languages/prism/tsx'
-import langYaml       from 'react-syntax-highlighter/dist/esm/languages/prism/yaml'
 import { FileText, Copy } from 'lucide-react'
 import { cn } from '@/lib/utils'
-
-// ── Language registration (module-level, idempotent) ─────────────────────────
-
-SyntaxHighlighter.registerLanguage('bash',       langBash)
-SyntaxHighlighter.registerLanguage('shell',      langBash)
-SyntaxHighlighter.registerLanguage('sh',         langBash)
-SyntaxHighlighter.registerLanguage('css',        langCss)
-SyntaxHighlighter.registerLanguage('html',       langHtml)
-SyntaxHighlighter.registerLanguage('json',       langJson)
-SyntaxHighlighter.registerLanguage('javascript', langJs)
-SyntaxHighlighter.registerLanguage('jsx',        langJsx)
-SyntaxHighlighter.registerLanguage('markdown',   langMarkdown)
-SyntaxHighlighter.registerLanguage('python',     langPython)
-SyntaxHighlighter.registerLanguage('sql',        langSql)
-SyntaxHighlighter.registerLanguage('typescript', langTs)
-SyntaxHighlighter.registerLanguage('tsx',        langTsx)
-SyntaxHighlighter.registerLanguage('yaml',       langYaml)
-
-const SUPPORTED_LANGUAGES = new Set([
-  'bash', 'shell', 'sh', 'css', 'html', 'json',
-  'javascript', 'jsx', 'markdown', 'python',
-  'sql', 'typescript', 'tsx', 'yaml',
-])
+import { SyntaxHighlighter, SUPPORTED_LANGUAGES } from './prismLanguages'
 
 // ── MD_COMPONENTS factory ─────────────────────────────────────────────────────
 // Called only when `dark` flips. The result is memoised and passed as the

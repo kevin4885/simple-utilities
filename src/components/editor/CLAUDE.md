@@ -229,7 +229,17 @@ selector, so the toolbar only re-renders when flags actually change (not every k
 Groups separated by vertical Separators. ToolbarItem → shadcn `Toggle` (sm).
 ToolbarListButton → shadcn `DropdownMenu`. Every button wrapped in shadcn `Tooltip`.
 
-The toolbar is `sticky top-0 z-10` inside `wysiwyg-root` — stays visible as the editor scrolls.
+The toolbar is a normal-flow `shrink-0` sibling above `EditorContent`, which is the
+scrollable pane (`flex-1 min-h-0 overflow-y-auto`) — so the toolbar always stays
+visible, no matter how far the user scrolls. `wysiwyg-root` itself has
+`overflow-hidden` and is bounded to its consumer's height (e.g. `h-full`); it does
+NOT use `position: sticky` for the toolbar. (An earlier version used `sticky top-0`
+on the toolbar, but `wysiwyg-root` is only ever one viewport-height tall while the
+document content can be much taller — `position: sticky` can only stay pinned
+within its own containing block's box, so once that box scrolled out of view the
+toolbar disappeared with it. Making `EditorContent` the scroll container instead
+fixes this, matching the shrink-0-toolbar + flex-1-overflow-y-auto-content pattern
+used elsewhere in the app, e.g. `ToolPage.tsx`.)
 
 ---
 

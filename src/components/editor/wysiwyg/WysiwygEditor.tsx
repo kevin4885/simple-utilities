@@ -408,10 +408,19 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
     // ── Render ─────────────────────────────────────────────────────────────
     return (
       <TooltipProvider>
-        <div className={cn('wysiwyg-root relative flex flex-col', dark && 'dark', className)}>
-          {/* Sticky formatting toolbar */}
+        <div className={cn('wysiwyg-root relative flex flex-col overflow-hidden', dark && 'dark', className)}>
+          {/* Formatting toolbar — a normal-flow sibling above the scrollable
+              content pane (not `sticky`). `wysiwyg-root` is bounded to a single
+              viewport-height by its consumer (e.g. `h-full`), while the actual
+              document content can be much taller; `position: sticky` can only
+              stay pinned within its own containing block's box, so once that
+              box scrolls out of view the toolbar would disappear along with
+              it. Making EditorContent the scroll container instead keeps the
+              toolbar permanently visible, matching the shrink-0-toolbar +
+              flex-1-overflow-y-auto-content pattern used elsewhere in the app
+              (see ToolPage.tsx, markdown-editor/index.tsx's topToolbar). */}
           {editor && !readOnly && resolvedToolbarConfig && (
-            <div className="sticky top-0 z-20">
+            <div className="shrink-0">
               <Toolbar
                 editor={editor}
                 config={resolvedToolbarConfig}
@@ -420,7 +429,7 @@ const WysiwygEditor = forwardRef<WysiwygEditorHandle, WysiwygEditorProps>(
             </div>
           )}
 
-          <EditorContent editor={editor} className="flex-1 min-h-0" />
+          <EditorContent editor={editor} className="flex-1 min-h-0 overflow-y-auto" />
 
           {/* ── Image bubble toolbar ─────────────────────────────────────── */}
           {editor && !readOnly && (

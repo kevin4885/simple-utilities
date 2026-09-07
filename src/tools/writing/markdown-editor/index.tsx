@@ -812,7 +812,7 @@ export default function VisualMarkdownEditorPage() {
   // ── Editor area (conditional rendering — only active mode is mounted) ───────
 
   const wysiwygPanel = (
-    <div className="h-full overflow-y-auto">
+    <div className="h-full overflow-hidden">
       <WysiwygEditor
         ref={wysiwygRef}
         value={activeDoc.content}

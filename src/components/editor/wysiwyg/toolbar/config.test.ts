@@ -9,8 +9,10 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest'
+import type { Editor } from '@tiptap/core'
 import { TOOLBAR_CONFIG, SLASH_ITEMS, formatHotkey } from './config'
 import type { ToolbarItem, ToolbarListButton } from './config'
+import { createTestEditor } from '../testUtils'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -198,5 +200,94 @@ describe('formatHotkey', () => {
     vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel')
     // Edge case: pattern with two Ctrl+
     expect(formatHotkey('Ctrl+Ctrl+X')).toBe('Cmd+Cmd+X')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Heading list button isActive logic (regression: paragraph must not be
+// active whenever the cursor is simply "not in a heading" — that made the
+// Heading toolbar button appear permanently highlighted, since a
+// ListButtonEntry's parent trigger highlights whenever ANY child item is
+// active. See config.ts `heading` list button's `paragraph` item.)
+// ---------------------------------------------------------------------------
+
+describe('heading list button isActive flags', () => {
+  function getHeadingListButton(): ToolbarListButton {
+    for (const group of TOOLBAR_CONFIG) {
+      for (const entry of group) {
+        if (isListButton(entry) && entry.id === 'heading') return entry
+      }
+    }
+    throw new Error('heading list button not found in TOOLBAR_CONFIG')
+  }
+
+  function getItem(list: ToolbarListButton, id: string): ToolbarItem {
+    const item = list.items.find((i) => i.id === id)
+    if (!item) throw new Error(`item ${id} not found`)
+    return item
+  }
+
+  function anyActive(list: ToolbarListButton, editor: Editor): boolean {
+    // Mirrors Toolbar.tsx's ListButtonEntry anyActive computation, including
+    // the excludeFromGroupActive filter for "default/reset" items.
+    return list.items
+      .filter((item) => !item.excludeFromGroupActive)
+      .some((item) => item.isActive?.(editor) ?? false)
+  }
+
+  let editor: Editor
+  afterEach(() => {
+    editor?.destroy()
+  })
+
+  it('paragraph item is NOT active when the cursor is in a heading', () => {
+    editor = createTestEditor('# Heading 1')
+    const heading = getHeadingListButton()
+    const paragraph = getItem(heading, 'paragraph')
+    editor.commands.setTextSelection(2) // inside the heading text
+    expect(editor.isActive('heading', { level: 1 })).toBe(true)
+    expect(paragraph.isActive?.(editor)).toBe(false)
+  })
+
+  it('paragraph item IS active when the cursor is in a plain paragraph', () => {
+    editor = createTestEditor('Just a normal paragraph.')
+    const heading = getHeadingListButton()
+    const paragraph = getItem(heading, 'paragraph')
+    editor.commands.setTextSelection(2)
+    expect(editor.isActive('paragraph')).toBe(true)
+    expect(paragraph.isActive?.(editor)).toBe(true)
+  })
+
+  it('heading list button anyActive is false in plain paragraph text (regression)', () => {
+    editor = createTestEditor('Just a normal paragraph.')
+    const heading = getHeadingListButton()
+    editor.commands.setTextSelection(2)
+    // Before the fix, paragraph.isActive was `!editor.isActive('heading')`,
+    // which is true here and made the Heading button permanently highlighted.
+    // After fixing the predicate alone, paragraph.isActive('paragraph') is
+    // still true for plain paragraphs, so `excludeFromGroupActive` on the
+    // paragraph item is required to keep it out of anyActive.
+    expect(anyActive(heading, editor)).toBe(false)
+  })
+
+  it('heading list button anyActive is true when cursor is in heading 1', () => {
+    editor = createTestEditor('# Heading 1\n\nBody text.')
+    const heading = getHeadingListButton()
+    editor.commands.setTextSelection(2) // inside "Heading 1"
+    expect(anyActive(heading, editor)).toBe(true)
+  })
+
+  it('paragraph item is flagged excludeFromGroupActive', () => {
+    const heading = getHeadingListButton()
+    const paragraph = getItem(heading, 'paragraph')
+    expect(paragraph.excludeFromGroupActive).toBe(true)
+  })
+
+  it('heading list button anyActive is false for a paragraph nested in a blockquote', () => {
+    editor = createTestEditor('> Quoted paragraph text.')
+    const heading = getHeadingListButton()
+    editor.commands.setTextSelection(3)
+    expect(editor.isActive('paragraph')).toBe(true)
+    expect(anyActive(heading, editor)).toBe(false)
   })
 })

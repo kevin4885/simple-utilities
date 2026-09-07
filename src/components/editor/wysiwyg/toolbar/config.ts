@@ -71,6 +71,14 @@ export interface ToolbarItem {
   isEnabled?: (editor: Editor) => boolean
   keywords?: string[]
   description?: string
+  /**
+   * When true, this item is a "default / reset" option within a
+   * ToolbarListButton's dropdown (e.g. "Paragraph" inside the Heading
+   * dropdown) and must NOT count toward the parent trigger's `anyActive`
+   * highlight. The item can still be highlighted for itself inside the
+   * open dropdown menu — this only excludes it from the group's OR check.
+   */
+  excludeFromGroupActive?: boolean
 }
 
 export interface ToolbarListButton {
@@ -186,8 +194,8 @@ export const TOOLBAR_CONFIG: ToolbarConfig = [
           icon: Pilcrow,
           hotkey: 'Ctrl+Alt+0',
           exec: (editor) => editor.chain().focus().setParagraph().run(),
-          isActive: (editor) =>
-            !editor.isActive('heading'),
+          isActive: (editor) => editor.isActive('paragraph'),
+          excludeFromGroupActive: true,
           keywords: ['paragraph', 'normal', 'p'],
           description: 'Normal paragraph',
         },

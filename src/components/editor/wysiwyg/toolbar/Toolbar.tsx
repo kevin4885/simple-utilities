@@ -197,8 +197,13 @@ interface ListButtonEntryProps {
 }
 
 function ListButtonEntry({ entry, flags, editor, actions }: ListButtonEntryProps) {
-  // Check if any child item is active → treat parent as active
-  const anyActive = entry.items.some((item) => flags[item.id]?.active ?? false)
+  // Check if any non-excluded child item is active → treat parent as active.
+  // Items flagged `excludeFromGroupActive` (e.g. "Paragraph" — the dropdown's
+  // default/reset option) are still highlighted for themselves inside the
+  // open menu but must not light up the parent trigger icon.
+  const anyActive = entry.items
+    .filter((item) => !item.excludeFromGroupActive)
+    .some((item) => flags[item.id]?.active ?? false)
   const TriggerIcon = entry.icon
   const tooltipLabel = entry.title
 

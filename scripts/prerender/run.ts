@@ -4,18 +4,21 @@
  * Entry point run via `tsx` as the final step of `npm run build`
  * (`"tsc -b && vite build && tsx scripts/prerender/run.ts"`). Reads
  * `dist/index.html` once, calls the pure builders in `./logic.ts`, and
- * writes the per-route static HTML plus `dist/robots.txt` and
- * `dist/sitemap.xml`.
- *
- * Does NOT write `dist/_redirects` — `buildRedirects` exists in `./logic.ts`
- * for symmetry with the other pure builders (Phase 2 of the plan), but
- * wiring its output to disk is Phase 3's file-scope.
+ * writes the per-route static HTML plus `dist/robots.txt`,
+ * `dist/sitemap.xml`, and `dist/_redirects`.
  */
 
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { getStaticRoutes, buildHtmlForRoute, buildSitemapXml, buildRobotsTxt } from './logic'
-import { readBaseHtml, writeRouteHtml, writeSitemapXml, writeRobotsTxt } from './io'
+import {
+  getStaticRoutes,
+  buildHtmlForRoute,
+  buildSitemapXml,
+  buildRobotsTxt,
+  buildRedirects,
+} from './logic'
+import { LEGACY_TOOL_IDS } from '../../src/tools/registry'
+import { readBaseHtml, writeRouteHtml, writeSitemapXml, writeRobotsTxt, writeRedirects } from './io'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DIST_DIR = path.resolve(__dirname, '../../dist')
@@ -31,8 +34,11 @@ async function main(): Promise<void> {
 
   await writeSitemapXml(DIST_DIR, buildSitemapXml(routes))
   await writeRobotsTxt(DIST_DIR, buildRobotsTxt())
+  await writeRedirects(DIST_DIR, buildRedirects(LEGACY_TOOL_IDS))
 
-  console.log(`[prerender] wrote ${routes.length} route(s), sitemap.xml, robots.txt to ${DIST_DIR}`)
+  console.log(
+    `[prerender] wrote ${routes.length} route(s), sitemap.xml, robots.txt, _redirects to ${DIST_DIR}`,
+  )
 }
 
 main().catch((err) => {

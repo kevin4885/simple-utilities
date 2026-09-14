@@ -1,6 +1,7 @@
 import { Link, useSearchParams } from 'react-router'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { tools, categories } from '@/tools/registry'
+import { useDocumentMeta } from '@/lib/useDocumentMeta'
 
 function pillClass(isActive: boolean) {
   return isActive
@@ -8,9 +9,14 @@ function pillClass(isActive: boolean) {
     : 'rounded-full px-3 py-1 text-sm font-medium bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground transition-colors w-full text-left'
 }
 
-export function HomePage() {
+export function AppHomePage() {
   const [searchParams] = useSearchParams()
   const activeCategory = searchParams.get('category')
+
+  useDocumentMeta(
+    'Browse Tools — Simple Utilities',
+    `Browse all ${tools.length} utility tools across ${categories.length} categories — text, converters, developer tools, and more. No sign-up, runs in your browser.`,
+  )
 
   const displayCategories = activeCategory
     ? categories.filter((c) => c === activeCategory)
@@ -24,14 +30,14 @@ export function HomePage() {
         <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 px-3">
           Categories
         </p>
-        <Link to="/" className={pillClass(activeCategory === null)}>
+        <Link to="/app" className={pillClass(activeCategory === null)}>
           All
         </Link>
         <div className="my-2 border-t" />
         {categories.map((cat) => (
           <Link
             key={cat}
-            to={`/?category=${encodeURIComponent(cat)}`}
+            to={`/app?category=${encodeURIComponent(cat)}`}
             className={pillClass(activeCategory === cat)}
           >
             {cat}
@@ -42,7 +48,7 @@ export function HomePage() {
       {/* ── Main Content ── */}
       <main className="flex-1 px-6 py-8 space-y-10 min-w-0 overflow-y-auto">
         <div>
-          <h1 className="text-3xl font-bold">Simple Utilities</h1>
+          <h1 className="text-3xl font-bold">Browse all tools</h1>
           <p className="mt-2 text-muted-foreground">
             A collection of small, useful tools. Pick a category or browse them all.
           </p>
@@ -51,7 +57,7 @@ export function HomePage() {
         {displayCategories.length === 0 && (
           <div className="rounded-lg border bg-muted/30 px-6 py-12 text-center text-muted-foreground">
             No tools found in this category.{' '}
-            <Link to="/" className="text-primary underline">
+            <Link to="/app" className="text-primary underline">
               Browse all
             </Link>
           </div>

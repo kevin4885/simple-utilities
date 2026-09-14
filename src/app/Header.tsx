@@ -40,7 +40,7 @@ export function Header({ onSearchClick }: HeaderProps) {
       <div className="flex items-center gap-4 px-6 py-3">
         {/* Logo / title */}
         <Link
-          to="/"
+          to="/app"
           className="flex items-center gap-2 font-bold text-foreground hover:text-primary transition-colors shrink-0"
         >
           <Wrench className="h-5 w-5 text-primary" />
@@ -93,7 +93,7 @@ export function Header({ onSearchClick }: HeaderProps) {
         <div className="md:hidden border-t bg-card/95 px-6 py-4">
           <div className="flex flex-wrap gap-2">
             <Link
-              to="/"
+              to="/app"
               onClick={() => setMenuOpen(false)}
               className={pillClass(activeCategory === null)}
             >
@@ -102,7 +102,7 @@ export function Header({ onSearchClick }: HeaderProps) {
             {categories.map((cat) => (
               <Link
                 key={cat}
-                to={`/?category=${encodeURIComponent(cat)}`}
+                to={`/app?category=${encodeURIComponent(cat)}`}
                 onClick={() => setMenuOpen(false)}
                 className={pillClass(activeCategory === cat)}
               >

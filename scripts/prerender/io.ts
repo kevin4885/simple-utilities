@@ -36,3 +36,7 @@ export async function writeSitemapXml(distDir: string, xml: string): Promise<voi
 export async function writeRobotsTxt(distDir: string, txt: string): Promise<void> {
   await writeFile(path.join(distDir, 'robots.txt'), txt, 'utf-8')
 }
+
+export async function writeRedirects(distDir: string, txt: string): Promise<void> {
+  await writeFile(path.join(distDir, '_redirects'), txt, 'utf-8')
+}

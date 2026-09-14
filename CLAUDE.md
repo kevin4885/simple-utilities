@@ -38,8 +38,13 @@ npm run format       # Format
 
 ```
 src/
-  app/              # Shell: Layout, routing, Header, theme toggle, CommandPalette
-  lib/              # cn() helper, Zustand theme store, search.ts (Fuse.js tool search), useMediaQuery.ts, useDebouncedValue.ts
+  app/              # Shell: LandingPage (marketing root "/"), AppShell (pathless layout route
+                    #   for "/app" + "/tools/:id" + unknown paths — owns Header, Ctrl+K,
+                    #   CommandPalette), AppHomePage (tool grid at "/app"), ToolPage, routing
+  lib/              # cn() helper, Zustand theme store, search.ts (Fuse.js tool search),
+                    #   content.ts (SITE_URL, LANDING_COPY, truncateDescription — shared SEO
+                    #   copy source), useDocumentMeta.ts (sets document.title / meta description
+                    #   on client-side navigation), useMediaQuery.ts, useDebouncedValue.ts
   components/
     ui/             # shadcn/ui components — source of truth is the files themselves
     editor/         # Shared editor components: CodeEditor, MarkdownRenderer (see editor/CLAUDE.md)
@@ -53,6 +58,20 @@ src/
   main.tsx
   index.css         # Tailwind v4 @import + @theme inline + OKLCH tokens
 ```
+
+## Route structure
+
+`/` is a standalone marketing `LandingPage` — own minimal header/footer, normal document
+scroll, no Ctrl+K. Everything else (`/app` — the tool browser, `/tools/:id`, and any unknown
+path) lives under `AppShell`, a **pathless** React Router layout route that owns the sticky
+`Header`, the Ctrl+K command palette, and the fixed-viewport scroll-lock shell — so those
+routes' own paths are unaffected by the layout route wrapping them.
+
+`src/lib/content.ts` is the single source of truth for SEO/marketing copy (`SITE_URL`,
+`LANDING_COPY`, `truncateDescription`) — read by both the live client (`useDocumentMeta`,
+called once per page in `LandingPage`/`AppHomePage`/`ToolPage`) and, in a later phase, a
+build-time static-HTML prerender step. Never duplicate title/description text elsewhere.
+
 
 ## Command palette (global tool search)
 

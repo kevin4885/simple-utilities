@@ -2,6 +2,8 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { z } from 'zod'
 import type { HexCase, OutputEncoding } from './logic'
+import { useAuth } from '@/lib/auth/useAuth'
+import { useToolState } from '@/lib/cloudState/useToolState'
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 
@@ -44,17 +46,21 @@ export function mergePersisted(
   return { ...current, ...result.data }
 }
 
-// ── Store ─────────────────────────────────────────────────────────────────────
+const DEFAULT_STATE: HashGeneratorPersistedState = {
+  inputText: '',
+  hexCase: 'lower',
+  outputEncoding: 'hex',
+  showHmac: false,
+  hmacKey: '',
+  activeTab: 'text',
+}
 
-export const useHashGeneratorStore = create<HashGeneratorState>()(
+// ── Local (signed-out) store — unchanged behavior/localStorage key ─────────────
+
+const useLocalHashGeneratorStore = create<HashGeneratorState>()(
   persist(
     (set) => ({
-      inputText: '',
-      hexCase: 'lower',
-      outputEncoding: 'hex',
-      showHmac: false,
-      hmacKey: '',
-      activeTab: 'text',
+      ...DEFAULT_STATE,
 
       setInputText: (inputText) => set({ inputText }),
       setHexCase: (hexCase) => set({ hexCase }),
@@ -70,3 +76,36 @@ export const useHashGeneratorStore = create<HashGeneratorState>()(
     },
   ),
 )
+
+// ── Cloud-backed state (Phase 3 of google-auth-cloud-state) ─────────────────────
+
+const TOOL_ID = 'hash-generator'
+
+function useHashGeneratorStoreImpl(): HashGeneratorState {
+  const { status } = useAuth()
+  const local = useLocalHashGeneratorStore()
+  const cloud = useToolState(TOOL_ID, 'default', HashGeneratorSchema, DEFAULT_STATE)
+
+  if (status !== 'signed-in') return local
+
+  const data = cloud.data
+  return {
+    inputText: data.inputText,
+    hexCase: data.hexCase,
+    outputEncoding: data.outputEncoding,
+    showHmac: data.showHmac,
+    hmacKey: data.hmacKey,
+    activeTab: data.activeTab,
+    setInputText: (inputText) => cloud.setData({ ...data, inputText }),
+    setHexCase: (hexCase) => cloud.setData({ ...data, hexCase }),
+    setOutputEncoding: (outputEncoding) => cloud.setData({ ...data, outputEncoding }),
+    setShowHmac: (showHmac) => cloud.setData({ ...data, showHmac }),
+    setHmacKey: (hmacKey) => cloud.setData({ ...data, hmacKey }),
+    setActiveTab: (activeTab) => cloud.setData({ ...data, activeTab }),
+  }
+}
+
+export const useHashGeneratorStore = Object.assign(useHashGeneratorStoreImpl, {
+  getState: () => useLocalHashGeneratorStore.getState(),
+  setState: (partial: Partial<HashGeneratorState>) => useLocalHashGeneratorStore.setState(partial),
+})

@@ -2,6 +2,8 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { z } from 'zod'
 import type { EncodeDecodeMode } from './logic'
+import { useAuth } from '@/lib/auth/useAuth'
+import { useToolState } from '@/lib/cloudState/useToolState'
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 
@@ -37,14 +39,18 @@ export function mergePersisted(
   return { ...current, ...result.data }
 }
 
-// ── Store ─────────────────────────────────────────────────────────────────────
+const DEFAULT_STATE: UrlParserPersistedState = {
+  urlInput: '',
+  encodeInput: '',
+  encodeMode: 'encodeURIComponent',
+}
 
-export const useUrlParserStore = create<UrlParserState>()(
+// ── Local (signed-out) store — unchanged behavior/localStorage key ─────────────
+
+const useLocalUrlParserStore = create<UrlParserState>()(
   persist(
     (set) => ({
-      urlInput: '',
-      encodeInput: '',
-      encodeMode: 'encodeURIComponent',
+      ...DEFAULT_STATE,
 
       setUrlInput: (urlInput) => set({ urlInput }),
       setEncodeInput: (encodeInput) => set({ encodeInput }),
@@ -57,3 +63,30 @@ export const useUrlParserStore = create<UrlParserState>()(
     },
   ),
 )
+
+// ── Cloud-backed state (Phase 3 of google-auth-cloud-state) ─────────────────────
+
+const TOOL_ID = 'url-parser'
+
+function useUrlParserStoreImpl(): UrlParserState {
+  const { status } = useAuth()
+  const local = useLocalUrlParserStore()
+  const cloud = useToolState(TOOL_ID, 'default', UrlParserSchema, DEFAULT_STATE)
+
+  if (status !== 'signed-in') return local
+
+  const data = cloud.data
+  return {
+    urlInput: data.urlInput,
+    encodeInput: data.encodeInput,
+    encodeMode: data.encodeMode,
+    setUrlInput: (urlInput) => cloud.setData({ ...data, urlInput }),
+    setEncodeInput: (encodeInput) => cloud.setData({ ...data, encodeInput }),
+    setEncodeMode: (encodeMode) => cloud.setData({ ...data, encodeMode }),
+  }
+}
+
+export const useUrlParserStore = Object.assign(useUrlParserStoreImpl, {
+  getState: () => useLocalUrlParserStore.getState(),
+  setState: (partial: Partial<UrlParserState>) => useLocalUrlParserStore.setState(partial),
+})

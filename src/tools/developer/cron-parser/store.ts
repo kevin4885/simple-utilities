@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { z } from 'zod'
+import { useAuth } from '@/lib/auth/useAuth'
+import { useToolState } from '@/lib/cloudState/useToolState'
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 
@@ -28,12 +30,16 @@ export function mergePersisted(
   return { ...current, ...result.data }
 }
 
-// ── Store ─────────────────────────────────────────────────────────────────────
+const DEFAULT_STATE: CronParserPersistedState = {
+  expression: '*/15 9-17 * * MON-FRI',
+}
 
-export const useCronParserStore = create<CronParserState>()(
+// ── Local (signed-out) store — unchanged behavior/localStorage key ─────────────
+
+const useLocalCronParserStore = create<CronParserState>()(
   persist(
     (set) => ({
-      expression: '*/15 9-17 * * MON-FRI',
+      ...DEFAULT_STATE,
 
       setExpression: (expression) => set({ expression }),
     }),
@@ -44,3 +50,26 @@ export const useCronParserStore = create<CronParserState>()(
     },
   ),
 )
+
+// ── Cloud-backed state (Phase 3 of google-auth-cloud-state) ─────────────────────
+
+const TOOL_ID = 'cron-parser'
+
+function useCronParserStoreImpl(): CronParserState {
+  const { status } = useAuth()
+  const local = useLocalCronParserStore()
+  const cloud = useToolState(TOOL_ID, 'default', CronParserSchema, DEFAULT_STATE)
+
+  if (status !== 'signed-in') return local
+
+  const data = cloud.data
+  return {
+    expression: data.expression,
+    setExpression: (expression) => cloud.setData({ ...data, expression }),
+  }
+}
+
+export const useCronParserStore = Object.assign(useCronParserStoreImpl, {
+  getState: () => useLocalCronParserStore.getState(),
+  setState: (partial: Partial<CronParserState>) => useLocalCronParserStore.setState(partial),
+})

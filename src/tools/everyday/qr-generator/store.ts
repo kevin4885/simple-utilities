@@ -12,6 +12,8 @@ import type {
   PhoneParams,
   GeoParams,
 } from './logic'
+import { useAuth } from '@/lib/auth/useAuth'
+import { useToolState } from '@/lib/cloudState/useToolState'
 
 // ── Per-type field schemas ────────────────────────────────────────────────────
 //
@@ -129,33 +131,37 @@ export function mergePersisted(
   return { ...current, ...patch }
 }
 
-// ── Store ─────────────────────────────────────────────────────────────────────
+const DEFAULT_STATE: QrGeneratorPersistedState = {
+  activeType: 'text' as QrContentType,
 
-export const useQrGeneratorStore = create<QrGeneratorState>()(
+  textParams: { text: '' },
+  wifiParams: {
+    ssid: '',
+    password: '',
+    security: 'WPA' as WifiSecurityType,
+    hidden: false,
+  },
+  vcardParams: { name: '', phone: '', email: '', org: '' },
+  emailParams: { to: '', subject: '', body: '' },
+  smsParams: { phone: '', message: '' },
+  phoneParams: { phone: '' },
+  geoParams: { lat: '', lng: '', query: '' },
+
+  renderOptions: {
+    errorCorrectionLevel: 'M' as RenderOptions['errorCorrectionLevel'],
+    size: 512,
+    fgColor: '#000000',
+    bgColor: '#ffffff',
+    margin: 4,
+  },
+}
+
+// ── Local (signed-out) store — unchanged behavior/localStorage key ─────────────
+
+const useLocalQrGeneratorStore = create<QrGeneratorState>()(
   persist(
     (set, get) => ({
-      activeType: 'text' as QrContentType,
-
-      textParams: { text: '' },
-      wifiParams: {
-        ssid: '',
-        password: '',
-        security: 'WPA' as WifiSecurityType,
-        hidden: false,
-      },
-      vcardParams: { name: '', phone: '', email: '', org: '' },
-      emailParams: { to: '', subject: '', body: '' },
-      smsParams: { phone: '', message: '' },
-      phoneParams: { phone: '' },
-      geoParams: { lat: '', lng: '', query: '' },
-
-      renderOptions: {
-        errorCorrectionLevel: 'M' as RenderOptions['errorCorrectionLevel'],
-        size: 512,
-        fgColor: '#000000',
-        bgColor: '#ffffff',
-        margin: 4,
-      },
+      ...DEFAULT_STATE,
 
       setActiveType: (activeType) => set({ activeType }),
       setTextParams: (params) => set({ textParams: params }),
@@ -175,3 +181,43 @@ export const useQrGeneratorStore = create<QrGeneratorState>()(
     },
   ),
 )
+
+// ── Cloud-backed state (Phase 3 of google-auth-cloud-state) ─────────────────────
+
+const TOOL_ID = 'qr-generator'
+
+function useQrGeneratorStoreImpl(): QrGeneratorState {
+  const { status } = useAuth()
+  const local = useLocalQrGeneratorStore()
+  const cloud = useToolState(TOOL_ID, 'default', QrGeneratorSchema, DEFAULT_STATE)
+
+  if (status !== 'signed-in') return local
+
+  const data = cloud.data
+  return {
+    activeType: data.activeType,
+    textParams: data.textParams,
+    wifiParams: data.wifiParams,
+    vcardParams: data.vcardParams,
+    emailParams: data.emailParams,
+    smsParams: data.smsParams,
+    phoneParams: data.phoneParams,
+    geoParams: data.geoParams,
+    renderOptions: data.renderOptions,
+    setActiveType: (activeType) => cloud.setData({ ...data, activeType }),
+    setTextParams: (params) => cloud.setData({ ...data, textParams: params }),
+    setWifiParams: (params) => cloud.setData({ ...data, wifiParams: params }),
+    setVCardParams: (params) => cloud.setData({ ...data, vcardParams: params }),
+    setEmailParams: (params) => cloud.setData({ ...data, emailParams: params }),
+    setSmsParams: (params) => cloud.setData({ ...data, smsParams: params }),
+    setPhoneParams: (params) => cloud.setData({ ...data, phoneParams: params }),
+    setGeoParams: (params) => cloud.setData({ ...data, geoParams: params }),
+    setRenderOptions: (opts) =>
+      cloud.setData({ ...data, renderOptions: { ...data.renderOptions, ...opts } }),
+  }
+}
+
+export const useQrGeneratorStore = Object.assign(useQrGeneratorStoreImpl, {
+  getState: () => useLocalQrGeneratorStore.getState(),
+  setState: (partial: Partial<QrGeneratorState>) => useLocalQrGeneratorStore.setState(partial),
+})

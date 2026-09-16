@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { z } from 'zod'
+import { useAuth } from '@/lib/auth/useAuth'
+import { useToolState } from '@/lib/cloudState/useToolState'
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 
@@ -33,14 +35,18 @@ export function mergePersisted(
   return { ...current, ...result.data }
 }
 
-// ── Store ─────────────────────────────────────────────────────────────────────
+const DEFAULT_STATE: StringEscaperPersistedState = {
+  direction: 'unescape',
+  quotes: false,
+  input: '',
+}
 
-export const useStringEscaperStore = create<StringEscaperState>()(
+// ── Local (signed-out) store — unchanged behavior/localStorage key ─────────────
+
+const useLocalStringEscaperStore = create<StringEscaperState>()(
   persist(
     (set) => ({
-      direction: 'unescape',
-      quotes: false,
-      input: '',
+      ...DEFAULT_STATE,
 
       setDirection: (direction) => set({ direction }),
       setQuotes: (quotes) => set({ quotes }),
@@ -52,3 +58,30 @@ export const useStringEscaperStore = create<StringEscaperState>()(
     },
   ),
 )
+
+// ── Cloud-backed state (Phase 3 of google-auth-cloud-state) ─────────────────────
+
+const TOOL_ID = 'string-escaper'
+
+function useStringEscaperStoreImpl(): StringEscaperState {
+  const { status } = useAuth()
+  const local = useLocalStringEscaperStore()
+  const cloud = useToolState(TOOL_ID, 'default', StringEscaperSchema, DEFAULT_STATE)
+
+  if (status !== 'signed-in') return local
+
+  const data = cloud.data
+  return {
+    direction: data.direction,
+    quotes: data.quotes,
+    input: data.input,
+    setDirection: (direction) => cloud.setData({ ...data, direction }),
+    setQuotes: (quotes) => cloud.setData({ ...data, quotes }),
+    setInput: (input) => cloud.setData({ ...data, input }),
+  }
+}
+
+export const useStringEscaperStore = Object.assign(useStringEscaperStoreImpl, {
+  getState: () => useLocalStringEscaperStore.getState(),
+  setState: (partial: Partial<StringEscaperState>) => useLocalStringEscaperStore.setState(partial),
+})

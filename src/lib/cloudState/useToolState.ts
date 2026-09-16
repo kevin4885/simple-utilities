@@ -22,6 +22,10 @@
  *
  * `setData` always fully replaces the value, mirroring every existing
  * Zustand store's `set` semantics — no partial-patch merge inside the hook.
+ *
+ * `useDeleteToolItem(toolId)` (Phase 1b addendum, below) is the delete
+ * primitive for a per-item row — signed-in only, same user/tool scoping
+ * discipline as the upsert path above.
  */
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
@@ -29,6 +33,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { z } from 'zod'
 import { supabase } from '../supabase/client'
 import { useAuth } from '../auth/useAuth'
+import { toolItemListQueryKey } from './useToolItemList'
 
 export interface UseToolStateResult<T> {
   data: T
@@ -163,5 +168,71 @@ export function useToolState<T>(
     data: localData,
     setData: setLocalData,
     isLoading: false,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// useDeleteToolItem — signed-in-only delete primitive (Phase 1b addendum).
+// ---------------------------------------------------------------------------
+
+export interface UseDeleteToolItemResult {
+  deleteItem: (itemId: string) => void
+  isDeleting: boolean
+}
+
+/**
+ * `useDeleteToolItem(toolId)` — deletes a single `tool_state` row for the
+ * current session's user and the given `toolId`, scoped by the caller's own
+ * `itemId` argument (never a caller-overridable `user_id`/`tool_id` — same
+ * discipline as `useToolState`'s upsert path above).
+ *
+ * Signed-out is out of scope for this hook (see the Phase 1b contract) — it
+ * is only ever called from a tool's signed-in path; the tool itself decides
+ * which path to use, exactly as `useToolState` already does.
+ *
+ * A delete of a row that doesn't exist (already deleted, e.g. a
+ * double-click race) is a no-op: Postgres/PostgREST returns success with
+ * zero rows affected, not an error, so this never throws or surfaces an
+ * error to the caller.
+ *
+ * On success, invalidates both this item's own `tool_state` query cache
+ * entry and the `toolId`'s `useToolItemList` cache entry, so a consumer's
+ * item list reflects the deletion without a manual refetch.
+ */
+export function useDeleteToolItem(toolId: string): UseDeleteToolItemResult {
+  const { status, user } = useAuth()
+  const userId = user?.id
+  const signedIn = status === 'signed-in' && !!userId
+  const queryClient = useQueryClient()
+
+  const mutation = useMutation({
+    mutationFn: async (itemId: string) => {
+      const { error } = await supabase
+        .from('tool_state')
+        .delete()
+        .eq('user_id', userId as string)
+        .eq('tool_id', toolId)
+        .eq('item_id', itemId)
+      if (error) throw error
+      return itemId
+    },
+    onSuccess: (itemId) => {
+      queryClient.removeQueries({ queryKey: toolStateQueryKey(userId, toolId, itemId) })
+      queryClient.invalidateQueries({ queryKey: toolItemListQueryKey(userId, toolId) })
+    },
+  })
+
+  return {
+    // Defense in depth: this hook is only ever called from a tool's
+    // signed-in path (per contract), but guard here too rather than
+    // relying solely on the caller — never issue a delete with no
+    // current session (RLS would reject it anyway, but this avoids the
+    // wasted round-trip and keeps `userId` from ever being `undefined`
+    // in the query builder call).
+    deleteItem: (itemId: string) => {
+      if (!signedIn) return
+      mutation.mutate(itemId)
+    },
+    isDeleting: mutation.isPending,
   }
 }

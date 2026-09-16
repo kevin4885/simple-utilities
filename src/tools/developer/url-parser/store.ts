@@ -4,6 +4,7 @@ import { z } from 'zod'
 import type { EncodeDecodeMode } from './logic'
 import { useAuth } from '@/lib/auth/useAuth'
 import { useToolState } from '@/lib/cloudState/useToolState'
+import { registerSweepTarget } from '@/lib/cloudState/importSweep.io'
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 
@@ -67,6 +68,15 @@ const useLocalUrlParserStore = create<UrlParserState>()(
 // ── Cloud-backed state (Phase 3 of google-auth-cloud-state) ─────────────────────
 
 const TOOL_ID = 'url-parser'
+
+// Import-sweep registration (Phase 3b of google-auth-cloud-state): on first
+// sign-in, the sweep imports this tool's current local data into the cloud
+// if no cloud row exists yet for this user/tool. See importSweep.io.ts.
+registerSweepTarget({
+  toolId: TOOL_ID,
+  getLocalItems: () => [{ itemId: 'default', data: useLocalUrlParserStore.getState() }],
+  schema: UrlParserSchema,
+})
 
 function useUrlParserStoreImpl(): UrlParserState {
   const { status } = useAuth()

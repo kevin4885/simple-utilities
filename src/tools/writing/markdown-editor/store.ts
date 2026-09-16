@@ -44,6 +44,7 @@ import {
 import { useAuth } from '@/lib/auth/useAuth'
 import { useToolState, useDeleteToolItem } from '@/lib/cloudState/useToolState'
 import { useToolItemList } from '@/lib/cloudState/useToolItemList'
+import { registerSweepTarget } from '@/lib/cloudState/importSweep.io'
 
 // ---------------------------------------------------------------------------
 // Schema (Zod — validates on rehydrate)
@@ -395,11 +396,10 @@ export const useVmeStore = create<VmeState>()(
 //   `useToolState`'s mutation is asynchronous (a network round trip), so two
 //   sequential calls would both read the same stale `activeDocState.data`
 //   and the second would silently clobber the first's snapshot.
-// - No import-sweep registration for markdown-editor is added in this phase
-//   (see the impl report's Notes for the lead) — the settings row's schema
-//   (with `docsIndex`) has no local-storage equivalent to import from
-//   without inventing a shape conversion this phase's acceptance criteria
-//   does not ask for.
+// - No import-sweep registration for markdown-editor was added in Phase 2
+//   (see that phase's impl report's Notes for the lead) — it is added in
+//   Phase 3b of google-auth-cloud-state (see the `registerSweepTarget` call
+//   below), reusing the exact `SettingsSchema` shape already defined here.
 // ---------------------------------------------------------------------------
 
 const TOOL_ID = 'markdown-editor'
@@ -447,6 +447,46 @@ const DEFAULT_SETTINGS: VmeSettings = {
   exportPrefs: DEFAULT_EXPORT_OPTIONS,
   docsIndex: [],
 }
+
+// ---------------------------------------------------------------------------
+// Import-sweep registration (Phase 3b of google-auth-cloud-state).
+//
+// Unlike every other (single-blob) tool, markdown-editor's local data maps
+// onto MULTIPLE sweep items: one per document (`itemId = doc.id`, `data =
+// doc`) plus one settings item (`itemId = '_settings'`) built from the
+// local store's own top-level fields, with `docsIndex` derived from the
+// local `docs[]` array's `{id, title, updatedAt}` — the exact same shape
+// `SettingsSchema` already expects for the cloud-backed settings row (see
+// the design notes above `useCloudMarkdownEditorState`). Each item is
+// validated independently by `decideImport` (in `importSweep.ts`) through
+// this target's `schema`, so the schema must accept either shape — a
+// `z.union([DocSchema, SettingsSchema])` rather than a single object
+// schema, since a single sweep target may carry items of two different
+// shapes (docs and the one settings row).
+// ---------------------------------------------------------------------------
+
+const SweepItemSchema = z.union([DocSchema, SettingsSchema])
+
+registerSweepTarget({
+  toolId: TOOL_ID,
+  getLocalItems: () => {
+    const local = useVmeStore.getState()
+    const docItems = local.docs.map((doc) => ({ itemId: doc.id, data: doc }))
+    const settingsItem = {
+      itemId: SETTINGS_ITEM_ID,
+      data: {
+        activeDocId: local.activeDocId,
+        selectedModel: local.selectedModel,
+        editorMode: local.editorMode,
+        hintDismissed: local.hintDismissed,
+        exportPrefs: local.exportPrefs,
+        docsIndex: local.docs.map((doc) => ({ id: doc.id, title: doc.title, updatedAt: doc.updatedAt })),
+      },
+    }
+    return [...docItems, settingsItem]
+  },
+  schema: SweepItemSchema,
+})
 
 /** Stable placeholder doc — never `crypto.randomUUID()` — used only while
  *  the active doc's own `docsIndex` entry hasn't resolved yet, so this hook

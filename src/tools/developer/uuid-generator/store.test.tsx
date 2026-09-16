@@ -25,6 +25,11 @@ vi.mock('@/lib/supabase/client', () => ({
   },
 }))
 
+const { registerSweepTargetMock } = vi.hoisted(() => ({ registerSweepTargetMock: vi.fn() }))
+vi.mock('@/lib/cloudState/importSweep.io', () => ({
+  registerSweepTarget: (...args: unknown[]) => registerSweepTargetMock(...args),
+}))
+
 beforeEach(() => {
   useAuthMock.mockReset().mockReturnValue({ status: 'signed-out', user: null })
   fromMock.mockReset()
@@ -129,5 +134,26 @@ describe('useUuidGeneratorStore — signed in', () => {
 
     await waitFor(() => expect(result.current.count).toBe(1))
     expect(result.current.idType).toBe('uuidv4')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Import-sweep registration (Phase 3b of google-auth-cloud-state)
+// ---------------------------------------------------------------------------
+describe('import-sweep registration', () => {
+  it("registers a sweep target with the correct toolId and getLocalItems() reflecting the local store's current data", () => {
+    expect(registerSweepTargetMock).toHaveBeenCalledTimes(1)
+    const target = registerSweepTargetMock.mock.calls[0][0]
+    expect(target.toolId).toBe('uuid-generator')
+
+    useUuidGeneratorStore.setState({ idType: 'nanoid', count: 5, nanoIdLength: 10 })
+
+    const items = target.getLocalItems()
+    expect(items).toEqual([
+      {
+        itemId: 'default',
+        data: expect.objectContaining({ idType: 'nanoid', count: 5, nanoIdLength: 10 }),
+      },
+    ])
   })
 })

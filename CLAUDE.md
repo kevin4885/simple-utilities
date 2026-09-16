@@ -86,9 +86,10 @@ first sign-in only, and only for a tool/item that has no cloud row yet.
 `supabase/migrations/0001_tool_state.sql` defines the `tool_state` table and
 its Row Level Security policies (every operation scoped to `auth.uid() =
 user_id`) — applied manually via the Supabase SQL editor/CLI, not by any
-build or test step in this repo. No individual tool is migrated onto
-`useToolState` yet as of Phase 1 — see the plan under `swe/` for the
-migration phases.
+build or test step in this repo. Every stateful tool (all `store.ts`-backed
+tools in `registry.ts`, including `markdown-editor`) is migrated onto
+`useToolState` and registered with the import sweep (`registerSweepTarget`)
+— see `swe/google-auth-cloud-state/` for the migration history.
 
 ## Route structure
 

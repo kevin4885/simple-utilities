@@ -2,6 +2,8 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { z } from 'zod'
 import type { Base64Variant } from './logic'
+import { useAuth } from '@/lib/auth/useAuth'
+import { useToolState } from '@/lib/cloudState/useToolState'
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 
@@ -35,14 +37,18 @@ export function mergePersisted(
   return { ...current, ...result.data }
 }
 
-// ── Store ─────────────────────────────────────────────────────────────────────
+const DEFAULT_STATE: Base64EncoderPersistedState = {
+  input: '',
+  direction: 'encode',
+  variant: 'standard',
+}
 
-export const useBase64EncoderStore = create<Base64EncoderState>()(
+// ── Local (signed-out) store — unchanged behavior/localStorage key ─────────────
+
+const useLocalBase64EncoderStore = create<Base64EncoderState>()(
   persist(
     (set) => ({
-      input: '',
-      direction: 'encode',
-      variant: 'standard',
+      ...DEFAULT_STATE,
 
       setInput: (input) => set({ input }),
       setDirection: (direction) => set({ direction }),
@@ -55,3 +61,30 @@ export const useBase64EncoderStore = create<Base64EncoderState>()(
     },
   ),
 )
+
+// ── Cloud-backed state (Phase 3 of google-auth-cloud-state) ─────────────────────
+
+const TOOL_ID = 'base64-encoder'
+
+function useBase64EncoderStoreImpl(): Base64EncoderState {
+  const { status } = useAuth()
+  const local = useLocalBase64EncoderStore()
+  const cloud = useToolState(TOOL_ID, 'default', Base64EncoderSchema, DEFAULT_STATE)
+
+  if (status !== 'signed-in') return local
+
+  const data = cloud.data
+  return {
+    input: data.input,
+    direction: data.direction,
+    variant: data.variant,
+    setInput: (input) => cloud.setData({ ...data, input }),
+    setDirection: (direction) => cloud.setData({ ...data, direction }),
+    setVariant: (variant) => cloud.setData({ ...data, variant }),
+  }
+}
+
+export const useBase64EncoderStore = Object.assign(useBase64EncoderStoreImpl, {
+  getState: () => useLocalBase64EncoderStore.getState(),
+  setState: (partial: Partial<Base64EncoderState>) => useLocalBase64EncoderStore.setState(partial),
+})

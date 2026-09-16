@@ -9,6 +9,8 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { z } from 'zod'
 import type { AddUnit } from './logic'
+import { useAuth } from '@/lib/auth/useAuth'
+import { useToolState } from '@/lib/cloudState/useToolState'
 
 // ── Schema ─────────────────────────────────────────────────────────────────────
 
@@ -70,23 +72,27 @@ export function mergePersisted(
   return { ...current, ...result.data }
 }
 
-// ── Store ──────────────────────────────────────────────────────────────────────
+const DEFAULT_STATE: DateCalculatorPersistedState = {
+  betweenStartDate: '',
+  betweenEndDate: '',
+  betweenIncludeEnd: false,
 
-export const useDateCalculatorStore = create<DateCalculatorState>()(
+  addBaseDate: '',
+  addAmount: '1',
+  addUnit: 'days',
+  addDirection: 'add',
+
+  ageBirthDate: '',
+  countdownTarget: '',
+  activeTab: 'between',
+}
+
+// ── Local (signed-out) store — unchanged behavior/localStorage key ─────────────
+
+const useLocalDateCalculatorStore = create<DateCalculatorState>()(
   persist(
     (set) => ({
-      betweenStartDate: '',
-      betweenEndDate: '',
-      betweenIncludeEnd: false,
-
-      addBaseDate: '',
-      addAmount: '1',
-      addUnit: 'days',
-      addDirection: 'add',
-
-      ageBirthDate: '',
-      countdownTarget: '',
-      activeTab: 'between',
+      ...DEFAULT_STATE,
 
       setBetweenStartDate: (betweenStartDate) => set({ betweenStartDate }),
       setBetweenEndDate: (betweenEndDate) => set({ betweenEndDate }),
@@ -110,3 +116,44 @@ export const useDateCalculatorStore = create<DateCalculatorState>()(
     },
   ),
 )
+
+// ── Cloud-backed state (Phase 3 of google-auth-cloud-state) ─────────────────────
+
+const TOOL_ID = 'date-calculator'
+
+function useDateCalculatorStoreImpl(): DateCalculatorState {
+  const { status } = useAuth()
+  const local = useLocalDateCalculatorStore()
+  const cloud = useToolState(TOOL_ID, 'default', DateCalculatorSchema, DEFAULT_STATE)
+
+  if (status !== 'signed-in') return local
+
+  const data = cloud.data
+  return {
+    betweenStartDate: data.betweenStartDate,
+    betweenEndDate: data.betweenEndDate,
+    betweenIncludeEnd: data.betweenIncludeEnd,
+    addBaseDate: data.addBaseDate,
+    addAmount: data.addAmount,
+    addUnit: data.addUnit,
+    addDirection: data.addDirection,
+    ageBirthDate: data.ageBirthDate,
+    countdownTarget: data.countdownTarget,
+    activeTab: data.activeTab,
+    setBetweenStartDate: (v) => cloud.setData({ ...data, betweenStartDate: v }),
+    setBetweenEndDate: (v) => cloud.setData({ ...data, betweenEndDate: v }),
+    setBetweenIncludeEnd: (v) => cloud.setData({ ...data, betweenIncludeEnd: v }),
+    setAddBaseDate: (v) => cloud.setData({ ...data, addBaseDate: v }),
+    setAddAmount: (v) => cloud.setData({ ...data, addAmount: v }),
+    setAddUnit: (v) => cloud.setData({ ...data, addUnit: v }),
+    setAddDirection: (v) => cloud.setData({ ...data, addDirection: v }),
+    setAgeBirthDate: (v) => cloud.setData({ ...data, ageBirthDate: v }),
+    setCountdownTarget: (v) => cloud.setData({ ...data, countdownTarget: v }),
+    setActiveTab: (v) => cloud.setData({ ...data, activeTab: v }),
+  }
+}
+
+export const useDateCalculatorStore = Object.assign(useDateCalculatorStoreImpl, {
+  getState: () => useLocalDateCalculatorStore.getState(),
+  setState: (partial: Partial<DateCalculatorState>) => useLocalDateCalculatorStore.setState(partial),
+})

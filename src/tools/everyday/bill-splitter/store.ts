@@ -2,6 +2,8 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { z } from 'zod'
 import type { RoundUpMode, CurrencyCode } from './logic'
+import { useAuth } from '@/lib/auth/useAuth'
+import { useToolState } from '@/lib/cloudState/useToolState'
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 //
@@ -59,18 +61,22 @@ export function mergePersisted(
   return { ...current, ...patch }
 }
 
-// ── Store ─────────────────────────────────────────────────────────────────────
+const DEFAULT_STATE: BillSplitterPersistedState = {
+  billStr: '',
+  taxStr: '',
+  tipPct: 18,
+  tipOnPreTax: false,
+  people: 2,
+  roundUpMode: 'none',
+  currency: 'USD',
+}
 
-export const useBillSplitterStore = create<BillSplitterState>()(
+// ── Local (signed-out) store — unchanged behavior/localStorage key ─────────────
+
+const useLocalBillSplitterStore = create<BillSplitterState>()(
   persist(
     (set) => ({
-      billStr: '',
-      taxStr: '',
-      tipPct: 18,
-      tipOnPreTax: false,
-      people: 2,
-      roundUpMode: 'none' as RoundUpMode,
-      currency: 'USD' as CurrencyCode,
+      ...DEFAULT_STATE,
 
       setBillStr: (billStr) => set({ billStr }),
       setTaxStr: (taxStr) => set({ taxStr }),
@@ -87,3 +93,38 @@ export const useBillSplitterStore = create<BillSplitterState>()(
     },
   ),
 )
+
+// ── Cloud-backed state (Phase 3 of google-auth-cloud-state) ─────────────────────
+
+const TOOL_ID = 'bill-splitter'
+
+function useBillSplitterStoreImpl(): BillSplitterState {
+  const { status } = useAuth()
+  const local = useLocalBillSplitterStore()
+  const cloud = useToolState(TOOL_ID, 'default', BillSplitterSchema, DEFAULT_STATE)
+
+  if (status !== 'signed-in') return local
+
+  const data = cloud.data
+  return {
+    billStr: data.billStr,
+    taxStr: data.taxStr,
+    tipPct: data.tipPct,
+    tipOnPreTax: data.tipOnPreTax,
+    people: data.people,
+    roundUpMode: data.roundUpMode,
+    currency: data.currency,
+    setBillStr: (billStr) => cloud.setData({ ...data, billStr }),
+    setTaxStr: (taxStr) => cloud.setData({ ...data, taxStr }),
+    setTipPct: (tipPct) => cloud.setData({ ...data, tipPct }),
+    setTipOnPreTax: (tipOnPreTax) => cloud.setData({ ...data, tipOnPreTax }),
+    setPeople: (people) => cloud.setData({ ...data, people }),
+    setRoundUpMode: (roundUpMode) => cloud.setData({ ...data, roundUpMode }),
+    setCurrency: (currency) => cloud.setData({ ...data, currency }),
+  }
+}
+
+export const useBillSplitterStore = Object.assign(useBillSplitterStoreImpl, {
+  getState: () => useLocalBillSplitterStore.getState(),
+  setState: (partial: Partial<BillSplitterState>) => useLocalBillSplitterStore.setState(partial),
+})

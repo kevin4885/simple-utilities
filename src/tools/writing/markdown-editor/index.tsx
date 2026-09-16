@@ -44,8 +44,11 @@
  *   (.md), Plain text (.txt), Copy as rich text, and — via `./export/ExportDialog.tsx`
  *   — HTML (.html) and PDF (browser print dialog). Every export action calls
  *   `flushEditor()` FIRST (same flush discipline as the History drawer) so the
- *   last keystrokes are captured, then reads `useVmeStore.getState()` (not a
- *   stale closure) for the freshly-flushed content. Styling options
+ *   last keystrokes are captured, then reads `latestContentRef.current` (kept
+ *   in sync with every store write, including synchronously inside
+ *   `handleContentChange` — not a stale React-render closure, and correct
+ *   whichever storage path — local or cloud — is currently active) for the
+ *   freshly-flushed content. Styling options
  *   (preset/paper/margins/title block/link URLs/page-break-per-H1) persist in
  *   the store as `exportPrefs` (`setExportPrefs`). All bytes are produced by
  *   pure builders in `./export/` (`exportOptions.ts`, `exportStyles.ts`,
@@ -130,7 +133,7 @@ import {
   KEYBOARD_SHORTCUTS,
   EDITOR_MODES,
 } from './logic'
-import { useVmeStore, type VmeDoc, type VmeModel, type VmeEditorMode } from './store'
+import { useMarkdownEditorState, type VmeDoc, type VmeModel, type VmeEditorMode } from './store'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -544,9 +547,28 @@ export default function VisualMarkdownEditorPage() {
     setEditorMode,
     dismissHint,
     setExportPrefs,
-  } = useVmeStore()
+  } = useMarkdownEditorState()
 
   const activeDoc = docs.find((d) => d.id === activeDocId) ?? docs[0]
+
+  // Mirrors activeDoc.content — kept in sync by the effect below on every
+  // render, AND eagerly inside handleContentChange (synchronously, before
+  // that effect would otherwise run) — used only by getContent below.
+  // Exists because `flushEditor()` synchronously triggers WysiwygEditor's
+  // onChange → handleContentChange → updateDoc, but neither store path
+  // guarantees `docs`/`activeDoc` (React-rendered values, captured in
+  // ExportMenu's `getContent` closure at the last render) reflect that new
+  // content synchronously afterward: the signed-out Zustand store updates
+  // synchronously but React doesn't re-render synchronously inside a click
+  // handler, and the signed-in cloud path (`useToolState`'s mutation) only
+  // updates its returned `data` after the upsert's network round trip
+  // resolves. This ref is the one thing every export/copy action can read
+  // for "the content as of the last flush," independent of which storage
+  // path is active.
+  const latestContentRef = useRef(activeDoc.content)
+  useEffect(() => {
+    latestContentRef.current = activeDoc.content
+  }, [activeDoc.content])
 
   // mode is driven by store; keep a local alias for convenience
   const mode = editorMode
@@ -624,6 +646,13 @@ export default function VisualMarkdownEditorPage() {
     // untouched.
     if (content === activeDoc.content) return
     updateDoc(activeDoc.id, { content })
+    // Updated synchronously (not just via the `latestContentRef.current =
+    // activeDoc.content` line above, which only runs on the next render) so
+    // `flushEditor()` followed immediately by `getContent()` in the same
+    // synchronous handler (see ExportMenu's `getContent` below) always sees
+    // the just-flushed content, even before either storage path's own
+    // state has caught up.
+    latestContentRef.current = content
     if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current)
     inactivityTimerRef.current = setTimeout(() => {
       saveVersion(activeDoc.id, { auto: true })
@@ -790,10 +819,7 @@ export default function VisualMarkdownEditorPage() {
         exportPrefs={exportPrefs}
         onPrefsChange={setExportPrefs}
         onBeforeExport={flushEditor}
-        getContent={() => {
-          const s = useVmeStore.getState()
-          return (s.docs.find((d) => d.id === s.activeDocId) ?? s.docs[0]).content
-        }}
+        getContent={() => latestContentRef.current}
       />
       <Button
         variant="ghost"

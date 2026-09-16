@@ -2,6 +2,9 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { z } from 'zod'
 import { UNIT_CATEGORIES, CATEGORIES } from './logic'
+import { useAuth } from '@/lib/auth/useAuth'
+import { useToolState } from '@/lib/cloudState/useToolState'
+import { registerSweepTarget } from '@/lib/cloudState/importSweep.io'
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 
@@ -79,14 +82,18 @@ function buildDefaultSelections(): Record<string, { fromUnit: string; toUnit: st
 
 const DEFAULT_SELECTIONS = buildDefaultSelections()
 
-// ── Store ─────────────────────────────────────────────────────────────────────
+const DEFAULT_STATE: UnitConverterPersistedState = {
+  activeCategory: UNIT_CATEGORIES[0],
+  unitSelections: DEFAULT_SELECTIONS,
+  inputValue: '',
+}
 
-export const useUnitConverterStore = create<UnitConverterState>()(
+// ── Local (signed-out) store — unchanged behavior/localStorage key ─────────────
+
+const useLocalUnitConverterStore = create<UnitConverterState>()(
   persist(
     (set) => ({
-      activeCategory: UNIT_CATEGORIES[0],
-      unitSelections: DEFAULT_SELECTIONS,
-      inputValue: '',
+      ...DEFAULT_STATE,
 
       setActiveCategory: (category) => set({ activeCategory: category }),
 
@@ -126,3 +133,64 @@ export const useUnitConverterStore = create<UnitConverterState>()(
     },
   ),
 )
+
+// ── Cloud-backed state (Phase 3 of google-auth-cloud-state) ─────────────────────
+
+const TOOL_ID = 'unit-converter'
+
+// Import-sweep registration (Phase 3b of google-auth-cloud-state): on first
+// sign-in, the sweep imports this tool's current local data into the cloud
+// if no cloud row exists yet for this user/tool. See importSweep.io.ts.
+registerSweepTarget({
+  toolId: TOOL_ID,
+  getLocalItems: () => [{ itemId: 'default', data: useLocalUnitConverterStore.getState() }],
+  schema: UnitConverterSchema,
+})
+
+function useUnitConverterStoreImpl(): UnitConverterState {
+  const { status } = useAuth()
+  const local = useLocalUnitConverterStore()
+  const cloud = useToolState(TOOL_ID, 'default', UnitConverterSchema, DEFAULT_STATE)
+
+  if (status !== 'signed-in') return local
+
+  const data = cloud.data
+  return {
+    activeCategory: data.activeCategory,
+    unitSelections: data.unitSelections,
+    inputValue: data.inputValue,
+    setActiveCategory: (category) => cloud.setData({ ...data, activeCategory: category }),
+    setFromUnit: (category, unit) =>
+      cloud.setData({
+        ...data,
+        unitSelections: {
+          ...data.unitSelections,
+          [category]: { ...(data.unitSelections[category] ?? defaultUnitsForCategory(category)), fromUnit: unit },
+        },
+      }),
+    setToUnit: (category, unit) =>
+      cloud.setData({
+        ...data,
+        unitSelections: {
+          ...data.unitSelections,
+          [category]: { ...(data.unitSelections[category] ?? defaultUnitsForCategory(category)), toUnit: unit },
+        },
+      }),
+    setInputValue: (value) => cloud.setData({ ...data, inputValue: value }),
+    swapUnits: (category) => {
+      const sel = data.unitSelections[category] ?? defaultUnitsForCategory(category)
+      cloud.setData({
+        ...data,
+        unitSelections: {
+          ...data.unitSelections,
+          [category]: { fromUnit: sel.toUnit, toUnit: sel.fromUnit },
+        },
+      })
+    },
+  }
+}
+
+export const useUnitConverterStore = Object.assign(useUnitConverterStoreImpl, {
+  getState: () => useLocalUnitConverterStore.getState(),
+  setState: (partial: Partial<UnitConverterState>) => useLocalUnitConverterStore.setState(partial),
+})

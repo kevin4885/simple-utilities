@@ -1,6 +1,9 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { z } from 'zod'
+import { useAuth } from '@/lib/auth/useAuth'
+import { useToolState } from '@/lib/cloudState/useToolState'
+import { registerSweepTarget } from '@/lib/cloudState/importSweep.io'
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 
@@ -40,16 +43,20 @@ export function mergePersisted(
   return { ...current, ...result.data }
 }
 
-// ── Store ─────────────────────────────────────────────────────────────────────
+const DEFAULT_STATE: DiffViewerPersistedState = {
+  original: '',
+  modified: '',
+  viewMode: 'unified',
+  ignoreWhitespace: false,
+  ignoreCase: false,
+}
 
-export const useDiffViewerStore = create<DiffViewerState>()(
+// ── Local (signed-out) store — unchanged behavior/localStorage key ─────────────
+
+const useLocalDiffViewerStore = create<DiffViewerState>()(
   persist(
     (set) => ({
-      original: '',
-      modified: '',
-      viewMode: 'unified',
-      ignoreWhitespace: false,
-      ignoreCase: false,
+      ...DEFAULT_STATE,
 
       setOriginal: (original) => set({ original }),
       setModified: (modified) => set({ modified }),
@@ -64,3 +71,43 @@ export const useDiffViewerStore = create<DiffViewerState>()(
     },
   ),
 )
+
+// ── Cloud-backed state (Phase 3 of google-auth-cloud-state) ─────────────────────
+
+const TOOL_ID = 'diff-viewer'
+
+// Import-sweep registration (Phase 3b of google-auth-cloud-state): on first
+// sign-in, the sweep imports this tool's current local data into the cloud
+// if no cloud row exists yet for this user/tool. See importSweep.io.ts.
+registerSweepTarget({
+  toolId: TOOL_ID,
+  getLocalItems: () => [{ itemId: 'default', data: useLocalDiffViewerStore.getState() }],
+  schema: DiffViewerSchema,
+})
+
+function useDiffViewerStoreImpl(): DiffViewerState {
+  const { status } = useAuth()
+  const local = useLocalDiffViewerStore()
+  const cloud = useToolState(TOOL_ID, 'default', DiffViewerSchema, DEFAULT_STATE)
+
+  if (status !== 'signed-in') return local
+
+  const data = cloud.data
+  return {
+    original: data.original,
+    modified: data.modified,
+    viewMode: data.viewMode,
+    ignoreWhitespace: data.ignoreWhitespace,
+    ignoreCase: data.ignoreCase,
+    setOriginal: (v) => cloud.setData({ ...data, original: v }),
+    setModified: (v) => cloud.setData({ ...data, modified: v }),
+    setViewMode: (v) => cloud.setData({ ...data, viewMode: v }),
+    setIgnoreWhitespace: (v) => cloud.setData({ ...data, ignoreWhitespace: v }),
+    setIgnoreCase: (v) => cloud.setData({ ...data, ignoreCase: v }),
+  }
+}
+
+export const useDiffViewerStore = Object.assign(useDiffViewerStoreImpl, {
+  getState: () => useLocalDiffViewerStore.getState(),
+  setState: (partial: Partial<DiffViewerState>) => useLocalDiffViewerStore.setState(partial),
+})

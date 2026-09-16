@@ -2,6 +2,9 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { z } from 'zod'
 import type { GenerateUnit, OutputFormat } from './logic'
+import { useAuth } from '@/lib/auth/useAuth'
+import { useToolState } from '@/lib/cloudState/useToolState'
+import { registerSweepTarget } from '@/lib/cloudState/importSweep.io'
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 
@@ -38,9 +41,9 @@ export function mergePersisted(
   return { ...current, ...result.data }
 }
 
-// ── Store ─────────────────────────────────────────────────────────────────────
+// ── Local (signed-out) store — unchanged behavior/localStorage key ─────────────
 
-export const useLoremIpsumStore = create<LoremIpsumState>()(
+const useLocalLoremIpsumStore = create<LoremIpsumState>()(
   persist(
     (set) => ({
       unit: 'paragraphs' as GenerateUnit,
@@ -60,3 +63,48 @@ export const useLoremIpsumStore = create<LoremIpsumState>()(
     },
   ),
 )
+
+// ── Cloud-backed state (Phase 3 of google-auth-cloud-state) ─────────────────────
+
+const TOOL_ID = 'lorem-ipsum'
+
+const DEFAULT_STATE: LoremIpsumPersistedState = {
+  unit: 'paragraphs',
+  count: 3,
+  classicStart: true,
+  format: 'plain',
+}
+
+// Import-sweep registration (Phase 3b of google-auth-cloud-state): on first
+// sign-in, the sweep imports this tool's current local data into the cloud
+// if no cloud row exists yet for this user/tool. See importSweep.io.ts.
+registerSweepTarget({
+  toolId: TOOL_ID,
+  getLocalItems: () => [{ itemId: 'default', data: useLocalLoremIpsumStore.getState() }],
+  schema: LoremIpsumSchema,
+})
+
+function useLoremIpsumStoreImpl(): LoremIpsumState {
+  const { status } = useAuth()
+  const local = useLocalLoremIpsumStore()
+  const cloud = useToolState(TOOL_ID, 'default', LoremIpsumSchema, DEFAULT_STATE)
+
+  if (status !== 'signed-in') return local
+
+  const data = cloud.data
+  return {
+    unit: data.unit,
+    count: data.count,
+    classicStart: data.classicStart,
+    format: data.format,
+    setUnit: (unit) => cloud.setData({ ...data, unit }),
+    setCount: (count) => cloud.setData({ ...data, count }),
+    setClassicStart: (classicStart) => cloud.setData({ ...data, classicStart }),
+    setFormat: (format) => cloud.setData({ ...data, format }),
+  }
+}
+
+export const useLoremIpsumStore = Object.assign(useLoremIpsumStoreImpl, {
+  getState: () => useLocalLoremIpsumStore.getState(),
+  setState: (partial: Partial<LoremIpsumState>) => useLocalLoremIpsumStore.setState(partial),
+})

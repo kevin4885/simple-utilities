@@ -2,6 +2,9 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { z } from 'zod'
 import { isValidIanaZone, getFriendlyLabel, getTodayDateStr, MAX_ZONES } from './logic'
+import { useAuth } from '@/lib/auth/useAuth'
+import { useToolState } from '@/lib/cloudState/useToolState'
+import { registerSweepTarget } from '@/lib/cloudState/importSweep.io'
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 
@@ -68,23 +71,50 @@ export function mergePersisted(
   }
 }
 
-// ── Store ─────────────────────────────────────────────────────────────────────
+const DEFAULT_STATE: TimezonePlannerPersistedState = {
+  zones: [],
+  selectedDate: '',
+}
 
-export const useTimezonePlannerStore = create<TimezonePlannerState>()(
+/** Shared zone-list mutation helpers, used by both the local and cloud paths
+ *  so the add/remove/move logic (bounds checks, dedup, IANA validation)
+ *  lives in exactly one place. */
+function computeAddZone(zones: StoredZone[], zone: string): StoredZone[] | null {
+  if (zones.length >= MAX_ZONES) return null
+  if (zones.some((z) => z.zone === zone)) return null
+  if (!isValidIanaZone(zone)) return null
+  const label = getFriendlyLabel(zone)
+  return [...zones, { zone, label, isLocal: false }]
+}
+
+function computeMoveZoneUp(zones: StoredZone[], zone: string): StoredZone[] | null {
+  const idx = zones.findIndex((z) => z.zone === zone)
+  if (idx <= 0) return null
+  const next = [...zones]
+  ;[next[idx - 1], next[idx]] = [next[idx], next[idx - 1]]
+  return next
+}
+
+function computeMoveZoneDown(zones: StoredZone[], zone: string): StoredZone[] | null {
+  const idx = zones.findIndex((z) => z.zone === zone)
+  if (idx < 0 || idx >= zones.length - 1) return null
+  const next = [...zones]
+  ;[next[idx], next[idx + 1]] = [next[idx + 1], next[idx]]
+  return next
+}
+
+// ── Local (signed-out) store — unchanged behavior/localStorage key ─────────────
+
+const useLocalTimezonePlannerStore = create<TimezonePlannerState>()(
   persist(
     (set, get) => ({
-      zones: [],
-      selectedDate: '',
+      ...DEFAULT_STATE,
 
       setZones: (zones) => set({ zones }),
 
       addZone: (zone) => {
-        const { zones } = get()
-        if (zones.length >= MAX_ZONES) return
-        if (zones.some((z) => z.zone === zone)) return
-        if (!isValidIanaZone(zone)) return
-        const label = getFriendlyLabel(zone)
-        set({ zones: [...zones, { zone, label, isLocal: false }] })
+        const next = computeAddZone(get().zones, zone)
+        if (next) set({ zones: next })
       },
 
       removeZone: (zone) => {
@@ -93,21 +123,15 @@ export const useTimezonePlannerStore = create<TimezonePlannerState>()(
 
       moveZoneUp: (zone) => {
         set((s) => {
-          const idx = s.zones.findIndex((z) => z.zone === zone)
-          if (idx <= 0) return s
-          const next = [...s.zones]
-          ;[next[idx - 1], next[idx]] = [next[idx], next[idx - 1]]
-          return { zones: next }
+          const next = computeMoveZoneUp(s.zones, zone)
+          return next ? { zones: next } : s
         })
       },
 
       moveZoneDown: (zone) => {
         set((s) => {
-          const idx = s.zones.findIndex((z) => z.zone === zone)
-          if (idx < 0 || idx >= s.zones.length - 1) return s
-          const next = [...s.zones]
-          ;[next[idx], next[idx + 1]] = [next[idx + 1], next[idx]]
-          return { zones: next }
+          const next = computeMoveZoneDown(s.zones, zone)
+          return next ? { zones: next } : s
         })
       },
 
@@ -120,6 +144,54 @@ export const useTimezonePlannerStore = create<TimezonePlannerState>()(
     },
   ),
 )
+
+// ── Cloud-backed state (Phase 3 of google-auth-cloud-state) ─────────────────────
+
+const TOOL_ID = 'timezone-planner'
+
+// Import-sweep registration (Phase 3b of google-auth-cloud-state): on first
+// sign-in, the sweep imports this tool's current local data into the cloud
+// if no cloud row exists yet for this user/tool. See importSweep.io.ts.
+registerSweepTarget({
+  toolId: TOOL_ID,
+  getLocalItems: () => [{ itemId: 'default', data: useLocalTimezonePlannerStore.getState() }],
+  schema: TimezonePlannerSchema,
+})
+
+function useTimezonePlannerStoreImpl(): TimezonePlannerState {
+  const { status } = useAuth()
+  const local = useLocalTimezonePlannerStore()
+  const cloud = useToolState(TOOL_ID, 'default', TimezonePlannerSchema, DEFAULT_STATE)
+
+  if (status !== 'signed-in') return local
+
+  const data = cloud.data
+  return {
+    zones: data.zones,
+    selectedDate: data.selectedDate,
+    setZones: (zones) => cloud.setData({ ...data, zones }),
+    addZone: (zone) => {
+      const next = computeAddZone(data.zones, zone)
+      if (next) cloud.setData({ ...data, zones: next })
+    },
+    removeZone: (zone) =>
+      cloud.setData({ ...data, zones: data.zones.filter((z) => z.zone !== zone) }),
+    moveZoneUp: (zone) => {
+      const next = computeMoveZoneUp(data.zones, zone)
+      if (next) cloud.setData({ ...data, zones: next })
+    },
+    moveZoneDown: (zone) => {
+      const next = computeMoveZoneDown(data.zones, zone)
+      if (next) cloud.setData({ ...data, zones: next })
+    },
+    setSelectedDate: (date) => cloud.setData({ ...data, selectedDate: date }),
+  }
+}
+
+export const useTimezonePlannerStore = Object.assign(useTimezonePlannerStoreImpl, {
+  getState: () => useLocalTimezonePlannerStore.getState(),
+  setState: (partial: Partial<TimezonePlannerState>) => useLocalTimezonePlannerStore.setState(partial),
+})
 
 // ── Bootstrap helper ──────────────────────────────────────────────────────────
 

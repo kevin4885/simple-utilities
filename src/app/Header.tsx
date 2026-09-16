@@ -1,8 +1,17 @@
 import { useState } from 'react'
-import { Sun, Moon, Wrench, Menu, X, Search } from 'lucide-react'
+import { Sun, Moon, Wrench, Menu, X, Search, LogIn, LogOut } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { useThemeStore } from '@/lib/theme'
+import { useAuth } from '@/lib/auth/useAuth'
 import { categories } from '@/tools/registry'
 
 // Detect Mac once at module load; stable across renders
@@ -16,6 +25,7 @@ interface HeaderProps {
 
 export function Header({ onSearchClick }: HeaderProps) {
   const { theme, setTheme } = useThemeStore()
+  const { user, status, signInWithGoogle, signOut } = useAuth()
   const [menuOpen, setMenuOpen] = useState(false)
   const [searchParams] = useSearchParams()
   const activeCategory = searchParams.get('category')
@@ -75,6 +85,55 @@ export function Header({ onSearchClick }: HeaderProps) {
         >
           <ThemeIcon className="h-4 w-4" />
         </Button>
+
+        {/* Sign-in / signed-in account menu */}
+        {status === 'signed-in' && user ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="shrink-0 rounded-full overflow-hidden"
+                aria-label="Account menu"
+              >
+                {user.user_metadata?.avatar_url ? (
+                  <img
+                    src={user.user_metadata.avatar_url as string}
+                    alt=""
+                    className="h-6 w-6 rounded-full"
+                  />
+                ) : (
+                  <span className="text-sm font-medium">
+                    {(user.user_metadata?.full_name as string | undefined)?.[0] ??
+                      user.email?.[0] ??
+                      '?'}
+                  </span>
+                )}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel className="truncate">
+                {(user.user_metadata?.full_name as string | undefined) ?? user.email}
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => void signOut()}>
+                <LogOut className="h-4 w-4" />
+                Sign out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={signInWithGoogle}
+            className="shrink-0"
+            disabled={status === 'loading'}
+          >
+            <LogIn className="h-4 w-4" />
+            <span className="hidden sm:inline">Sign in with Google</span>
+          </Button>
+        )}
 
         {/* Hamburger — mobile only */}
         <Button

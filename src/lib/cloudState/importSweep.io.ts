@@ -92,12 +92,23 @@ async function sweepTarget(userId: string, target: SweepTarget): Promise<void> {
     )
     if (decision.action !== 'import') continue
 
-    const { error: upsertError } = await supabase.from('tool_state').upsert({
-      user_id: userId,
-      tool_id: target.toolId,
-      item_id: item.itemId,
-      data: decision.payload,
-    })
+    const { error: upsertError } = await supabase.from('tool_state').upsert(
+      {
+        user_id: userId,
+        tool_id: target.toolId,
+        item_id: item.itemId,
+        data: decision.payload,
+      },
+      // `ignoreDuplicates: true` makes the "never overwrite an existing row"
+      // guarantee hold even under a race between two concurrent sweeps for
+      // the same (user_id, tool_id, item_id) — e.g. two tabs/devices both
+      // completing their first sign-in in the same window and both passing
+      // the select-based existence check above before either upsert lands.
+      // Without this, the second upsert would silently overwrite the
+      // first's row; with it, Postgres itself rejects the conflicting
+      // insert instead of applying it as an update.
+      { onConflict: 'user_id,tool_id,item_id', ignoreDuplicates: true },
+    )
     if (upsertError) {
       console.error(
         `[importSweep] failed to import "${target.toolId}/${item.itemId}":`,

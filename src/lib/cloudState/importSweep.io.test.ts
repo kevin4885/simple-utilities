@@ -60,12 +60,15 @@ describe('runImportSweep', () => {
 
     await runImportSweep('user-123', [target])
 
-    expect(upsertMock).toHaveBeenCalledWith({
-      user_id: 'user-123',
-      tool_id: 'word-counter',
-      item_id: 'default',
-      data: { text: 'hello' },
-    })
+    expect(upsertMock).toHaveBeenCalledWith(
+      {
+        user_id: 'user-123',
+        tool_id: 'word-counter',
+        item_id: 'default',
+        data: { text: 'hello' },
+      },
+      { onConflict: 'user_id,tool_id,item_id', ignoreDuplicates: true },
+    )
   })
 
   it('skips a tool that already has a cloud row for that item, never overwriting it', async () => {
@@ -110,6 +113,7 @@ describe('runImportSweep', () => {
     expect(selectChain.eq).toHaveBeenCalledWith('tool_id', 'bill-splitter')
     expect(upsertMock).toHaveBeenCalledWith(
       expect.objectContaining({ user_id: 'the-current-user', tool_id: 'bill-splitter' }),
+      expect.anything(),
     )
   })
 
@@ -117,7 +121,8 @@ describe('runImportSweep', () => {
     let rows: { item_id: string }[] = []
     fromMock.mockImplementation(() => ({
       select: () => makeSelectChain({ data: rows, error: null }),
-      upsert: (row: { item_id: string }) => {
+      upsert: (row: { item_id: string }, _opts?: unknown) => {
+        void _opts
         rows = [{ item_id: row.item_id }]
         return Promise.resolve({ data: null, error: null })
       },

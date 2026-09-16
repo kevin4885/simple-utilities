@@ -30,7 +30,8 @@ vi.mock('../supabase/client', () => ({
   },
 }))
 
-const { useToolState } = await import('./useToolState')
+const { useToolState, useDeleteToolItem, toolStateQueryKey } = await import('./useToolState')
+const { toolItemListQueryKey } = await import('./useToolItemList')
 
 const Schema = z.object({ text: z.string() })
 const defaultValue = { text: '' }
@@ -50,6 +51,16 @@ function makeChain(): Chain {
 function wrapper({ children }: { children: ReactNode }) {
   const queryClient = new QueryClient()
   return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+}
+
+/** Like `wrapper`, but hands back the `QueryClient` instance so a test can
+ *  inspect cache state directly after a mutation resolves. */
+function makeWrapperWithClient() {
+  const queryClient = new QueryClient()
+  function ClientWrapper({ children }: { children: ReactNode }) {
+    return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  }
+  return { queryClient, wrapper: ClientWrapper }
 }
 
 beforeEach(() => {
@@ -160,5 +171,109 @@ describe('useToolState — signed in', () => {
 
     await waitFor(() => expect(result.current.isLoading).toBe(false))
     expect(result.current.data).toEqual(defaultValue)
+  })
+})
+
+describe('useDeleteToolItem — signed in', () => {
+  beforeEach(() => {
+    useAuthMock.mockReturnValue({
+      status: 'signed-in',
+      user: { id: 'the-current-user' },
+    })
+  })
+
+  function makeDeleteChain() {
+    const chain = {} as { eq: ReturnType<typeof vi.fn> }
+    chain.eq = vi.fn(() => chain)
+    return chain
+  }
+
+  it("issues exactly one .delete() scoped to the session user id, the hook's own toolId, and the given itemId — never a caller-overridable value", async () => {
+    const chain = makeDeleteChain()
+    const deleteMock = vi.fn(() => chain)
+    fromMock.mockReturnValue({ delete: deleteMock })
+    // The last .eq() in the chain resolves the delete.
+    let eqCallCount = 0
+    chain.eq.mockImplementation(() => {
+      eqCallCount += 1
+      if (eqCallCount === 3) return Promise.resolve({ data: null, error: null })
+      return chain
+    })
+
+    const { result } = renderHook(() => useDeleteToolItem('signed-in-tool'), { wrapper })
+
+    act(() => {
+      result.current.deleteItem('doc-123')
+    })
+
+    await waitFor(() => expect(result.current.isDeleting).toBe(false))
+
+    expect(fromMock).toHaveBeenCalledWith('tool_state')
+    expect(deleteMock).toHaveBeenCalledTimes(1)
+    expect(chain.eq).toHaveBeenCalledWith('user_id', 'the-current-user')
+    expect(chain.eq).toHaveBeenCalledWith('tool_id', 'signed-in-tool')
+    expect(chain.eq).toHaveBeenCalledWith('item_id', 'doc-123')
+  })
+
+  it('deleting a non-existent item_id is a no-op — does not throw, isDeleting returns to false, and the hook remains usable for a subsequent call', async () => {
+    const chain = makeDeleteChain()
+    // Supabase/PostgREST returns success with zero rows affected, not an
+    // error, when the row doesn't exist — never surfaced as an error here.
+    let eqCallCount = 0
+    chain.eq.mockImplementation(() => {
+      eqCallCount += 1
+      if (eqCallCount % 3 === 0) return Promise.resolve({ data: null, error: null })
+      return chain
+    })
+    fromMock.mockReturnValue({ delete: vi.fn(() => chain) })
+
+    const { result } = renderHook(() => useDeleteToolItem('signed-in-tool'), { wrapper })
+
+    act(() => {
+      result.current.deleteItem('already-gone')
+    })
+    await waitFor(() => expect(result.current.isDeleting).toBe(false))
+
+    // Hook remains usable for a subsequent call.
+    act(() => {
+      result.current.deleteItem('another-item')
+    })
+    await waitFor(() => expect(result.current.isDeleting).toBe(false))
+
+    expect(fromMock).toHaveBeenCalledTimes(2)
+  })
+
+  it("after a successful delete, useToolItemList(toolId)'s cached item list no longer includes the deleted item_id", async () => {
+    const { queryClient, wrapper: clientWrapper } = makeWrapperWithClient()
+    const userId = 'the-current-user'
+    const toolId = 'signed-in-tool'
+
+    // Seed the item-list cache exactly as useToolItemList would populate it.
+    queryClient.setQueryData(toolItemListQueryKey(userId, toolId), ['doc-1', 'doc-123'])
+    queryClient.setQueryData(toolStateQueryKey(userId, toolId, 'doc-123'), { text: 'gone soon' })
+
+    const chain = makeDeleteChain()
+    let eqCallCount = 0
+    chain.eq.mockImplementation(() => {
+      eqCallCount += 1
+      if (eqCallCount === 3) return Promise.resolve({ data: null, error: null })
+      return chain
+    })
+    fromMock.mockReturnValue({ delete: vi.fn(() => chain) })
+
+    const { result } = renderHook(() => useDeleteToolItem(toolId), { wrapper: clientWrapper })
+
+    act(() => {
+      result.current.deleteItem('doc-123')
+    })
+
+    await waitFor(() => expect(result.current.isDeleting).toBe(false))
+
+    // The item's own cached tool_state entry is gone.
+    expect(queryClient.getQueryData(toolStateQueryKey(userId, toolId, 'doc-123'))).toBeUndefined()
+    // The item-list query was invalidated (marked stale) so a mounted
+    // useToolItemList consumer will refetch and drop 'doc-123'.
+    const listState = queryClient.getQueryState(toolItemListQueryKey(userId, toolId))
+    expect(listState?.isInvalidated).toBe(true)
   })
 })

@@ -34,6 +34,11 @@ vi.mock('@/lib/supabase/client', () => ({
   },
 }))
 
+const { registerSweepTargetMock } = vi.hoisted(() => ({ registerSweepTargetMock: vi.fn() }))
+vi.mock('@/lib/cloudState/importSweep.io', () => ({
+  registerSweepTarget: (...args: unknown[]) => registerSweepTargetMock(...args),
+}))
+
 beforeEach(() => {
   useAuthMock.mockReset().mockReturnValue({ status: 'signed-out', user: null })
   fromMock.mockReset()
@@ -237,5 +242,26 @@ describe('useBillSplitterStore — signed in', () => {
 
     await waitFor(() => expect(result.current.people).toBe(2))
     expect(result.current.billStr).toBe('')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Import-sweep registration (Phase 3b of google-auth-cloud-state)
+// ---------------------------------------------------------------------------
+describe('import-sweep registration', () => {
+  it("registers a sweep target with the correct toolId and getLocalItems() reflecting the local store's current data", () => {
+    expect(registerSweepTargetMock).toHaveBeenCalledTimes(1)
+    const target = registerSweepTargetMock.mock.calls[0][0]
+    expect(target.toolId).toBe('bill-splitter')
+
+    useBillSplitterStore.setState({ billStr: '99.99', people: 4, currency: 'EUR' })
+
+    const items = target.getLocalItems()
+    expect(items).toEqual([
+      {
+        itemId: 'default',
+        data: expect.objectContaining({ billStr: '99.99', people: 4, currency: 'EUR' }),
+      },
+    ])
   })
 })

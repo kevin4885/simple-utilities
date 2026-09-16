@@ -17,6 +17,7 @@ import { persist } from 'zustand/middleware'
 import { CachedStateSchema, type CachedState } from './schemas'
 import { useAuth } from '@/lib/auth/useAuth'
 import { useToolState } from '@/lib/cloudState/useToolState'
+import { registerSweepTarget } from '@/lib/cloudState/importSweep.io'
 
 // Persist schema — only the cache fields survive localStorage round-trips
 const PersistSchema = CachedStateSchema
@@ -69,6 +70,16 @@ const useLocalLlanoCastellStore = create<LlanoCastellState>()(
 // ── Cloud-backed state (Phase 3 of google-auth-cloud-state) ─────────────────────
 
 const TOOL_ID = 'llano-castell'
+
+// Import-sweep registration (Phase 3b of google-auth-cloud-state): on first
+// sign-in, the sweep imports this tool's current local data (the cached
+// gauge readings) into the cloud if no cloud row exists yet for this
+// user/tool. See importSweep.io.ts.
+registerSweepTarget({
+  toolId: TOOL_ID,
+  getLocalItems: () => [{ itemId: 'default', data: useLocalLlanoCastellStore.getState() }],
+  schema: CachedStateSchema,
+})
 
 function useLlanoCastellStoreImpl(): LlanoCastellState {
   const { status } = useAuth()

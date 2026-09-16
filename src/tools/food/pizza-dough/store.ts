@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { type ThicknessName, DEFAULT_HYDRATION_REGULAR, DEFAULT_HYDRATION_GF } from './logic'
 import { useAuth } from '@/lib/auth/useAuth'
 import { useToolState } from '@/lib/cloudState/useToolState'
+import { registerSweepTarget } from '@/lib/cloudState/importSweep.io'
 
 /** Integer percentage defaults exposed so the UI and tests can reference them. */
 export const DEFAULT_HYDRATION_PCT_REGULAR = Math.round(DEFAULT_HYDRATION_REGULAR * 100) // 62
@@ -92,6 +93,15 @@ const useLocalPizzaDoughStore = create<PizzaDoughState>()(
 // ── Cloud-backed state (Phase 3 of google-auth-cloud-state) ─────────────────────
 
 const TOOL_ID = 'pizza-dough'
+
+// Import-sweep registration (Phase 3b of google-auth-cloud-state): on first
+// sign-in, the sweep imports this tool's current local data into the cloud
+// if no cloud row exists yet for this user/tool. See importSweep.io.ts.
+registerSweepTarget({
+  toolId: TOOL_ID,
+  getLocalItems: () => [{ itemId: 'default', data: useLocalPizzaDoughStore.getState() }],
+  schema: PizzaDoughSchema,
+})
 
 function usePizzaDoughStoreImpl(): PizzaDoughState {
   const { status } = useAuth()

@@ -52,6 +52,11 @@ vi.mock('@/lib/supabase/client', () => ({
   },
 }))
 
+const { registerSweepTargetMock } = vi.hoisted(() => ({ registerSweepTargetMock: vi.fn() }))
+vi.mock('@/lib/cloudState/importSweep.io', () => ({
+  registerSweepTarget: (...args: unknown[]) => registerSweepTargetMock(...args),
+}))
+
 beforeEach(() => {
   useAuthMock.mockReset().mockReturnValue({ status: 'signed-out', user: null })
   fromMock.mockReset()
@@ -549,5 +554,57 @@ describe('useMarkdownEditorState — signed out (unaffected by the cloud path ex
 
     expect(result.current.docs[0].id).toBe('local-doc')
     expect(fromMock).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Import-sweep registration (Phase 3b of google-auth-cloud-state)
+//
+// Unlike the single-blob tools, markdown-editor's `getLocalItems()` returns
+// one item per local doc plus one '_settings' item. Seeds the local store
+// with 2 docs and confirms: the registered target's toolId, that the
+// returned items' itemIds match (each doc's own id, plus '_settings'), and
+// that each item's data round-trips through the tool's own registered
+// schema (a union of DocSchema/SettingsSchema) successfully.
+// ---------------------------------------------------------------------------
+describe('import-sweep registration', () => {
+  it("registers with toolId 'markdown-editor' and getLocalItems() returns one item per doc plus a '_settings' item, each validating through the registered schema", () => {
+    expect(registerSweepTargetMock).toHaveBeenCalledTimes(1)
+    const target = registerSweepTargetMock.mock.calls[0][0]
+    expect(target.toolId).toBe('markdown-editor')
+
+    const docA = { id: 'doc-a', title: 'Doc A', content: 'Alpha', updatedAt: 1000, versions: [] }
+    const docB = { id: 'doc-b', title: 'Doc B', content: 'Beta', updatedAt: 2000, versions: [] }
+    useVmeStore.setState({
+      docs: [docA, docB],
+      activeDocId: 'doc-a',
+      selectedModel: 'claude',
+      editorMode: 'markdown',
+      hintDismissed: true,
+      exportPrefs: DEFAULT_EXPORT_OPTIONS,
+    })
+
+    const items = target.getLocalItems()
+    expect(items.map((i: { itemId: string }) => i.itemId).sort()).toEqual(['_settings', 'doc-a', 'doc-b'])
+
+    for (const item of items) {
+      const parsed = target.schema.safeParse(item.data)
+      expect(parsed.success).toBe(true)
+    }
+
+    const settingsItem = items.find((i: { itemId: string }) => i.itemId === '_settings')
+    expect(settingsItem.data).toEqual(
+      expect.objectContaining({
+        activeDocId: 'doc-a',
+        selectedModel: 'claude',
+        docsIndex: [
+          { id: 'doc-a', title: 'Doc A', updatedAt: 1000 },
+          { id: 'doc-b', title: 'Doc B', updatedAt: 2000 },
+        ],
+      }),
+    )
+
+    const docAItem = items.find((i: { itemId: string }) => i.itemId === 'doc-a')
+    expect(docAItem.data).toEqual(docA)
   })
 })

@@ -24,7 +24,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, cleanup, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import VisualMarkdownEditorPage from './index'
 import { useVmeStore } from './store'
 
@@ -98,28 +97,10 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-/**
- * `VisualMarkdownEditorPage` now always calls `useMarkdownEditorState()`,
- * which unconditionally mounts `useToolState`/`useToolItemList` alongside
- * the local store (Rules of Hooks — see store.ts's design notes), even
- * while signed out. This wrapper exists only so those always-mounted cloud
- * hooks have a `QueryClient` in the tree — every test in this file still
- * exercises the same signed-out/local-store path as before (the default
- * `useAuth()` context value is `status: 'loading'`, never 'signed-in').
- */
-function renderPage() {
-  const queryClient = new QueryClient()
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <VisualMarkdownEditorPage />
-    </QueryClientProvider>,
-  )
-}
-
 describe('VisualMarkdownEditorPage — real TipTap integration', () => {
   it('Restore updates the real WYSIWYG (ProseMirror) editor', async () => {
     const user = userEvent.setup()
-    const { container } = renderPage()
+    const { container } = render(<VisualMarkdownEditorPage />)
 
     // Real TipTap has mounted with the seeded content.
     await waitFor(() => expect(container.querySelector('.ProseMirror')).toBeTruthy())
@@ -145,7 +126,7 @@ describe('VisualMarkdownEditorPage — real TipTap integration', () => {
 
   it('restored content shows in Markdown mode (real CodeMirror)', async () => {
     const user = userEvent.setup()
-    const { container } = renderPage()
+    const { container } = render(<VisualMarkdownEditorPage />)
 
     await waitFor(() => expect(container.querySelector('.ProseMirror')).toBeTruthy())
 
@@ -171,7 +152,7 @@ describe('VisualMarkdownEditorPage — real TipTap integration', () => {
 
   it('opening the drawer without edits is a no-op on the doc (updatedAt + version count unchanged)', async () => {
     const user = userEvent.setup()
-    const { container } = renderPage()
+    const { container } = render(<VisualMarkdownEditorPage />)
     await waitFor(() => expect(container.querySelector('.ProseMirror')).toBeTruthy())
 
     await user.click(screen.getByLabelText('Version history'))
@@ -184,7 +165,7 @@ describe('VisualMarkdownEditorPage — real TipTap integration', () => {
 
   it('typing in the real WYSIWYG editor still updates the store (debounced flush)', async () => {
     const user = userEvent.setup()
-    const { container } = renderPage()
+    const { container } = render(<VisualMarkdownEditorPage />)
 
     await waitFor(() => expect(container.querySelector('.ProseMirror')).toBeTruthy())
     const proseMirror = container.querySelector('.ProseMirror') as HTMLElement

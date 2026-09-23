@@ -2,9 +2,6 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { z } from 'zod'
 import type { HexCase, OutputEncoding } from './logic'
-import { useAuth } from '@/lib/auth/useAuth'
-import { useToolState } from '@/lib/cloudState/useToolState'
-import { registerSweepTarget } from '@/lib/cloudState/importSweep.io'
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 
@@ -47,21 +44,17 @@ export function mergePersisted(
   return { ...current, ...result.data }
 }
 
-const DEFAULT_STATE: HashGeneratorPersistedState = {
-  inputText: '',
-  hexCase: 'lower',
-  outputEncoding: 'hex',
-  showHmac: false,
-  hmacKey: '',
-  activeTab: 'text',
-}
+// ── Store ─────────────────────────────────────────────────────────────────────
 
-// ── Local (signed-out) store — unchanged behavior/localStorage key ─────────────
-
-const useLocalHashGeneratorStore = create<HashGeneratorState>()(
+export const useHashGeneratorStore = create<HashGeneratorState>()(
   persist(
     (set) => ({
-      ...DEFAULT_STATE,
+      inputText: '',
+      hexCase: 'lower',
+      outputEncoding: 'hex',
+      showHmac: false,
+      hmacKey: '',
+      activeTab: 'text',
 
       setInputText: (inputText) => set({ inputText }),
       setHexCase: (hexCase) => set({ hexCase }),
@@ -77,45 +70,3 @@ const useLocalHashGeneratorStore = create<HashGeneratorState>()(
     },
   ),
 )
-
-// ── Cloud-backed state (Phase 3 of google-auth-cloud-state) ─────────────────────
-
-const TOOL_ID = 'hash-generator'
-
-// Import-sweep registration (Phase 3b of google-auth-cloud-state): on first
-// sign-in, the sweep imports this tool's current local data into the cloud
-// if no cloud row exists yet for this user/tool. See importSweep.io.ts.
-registerSweepTarget({
-  toolId: TOOL_ID,
-  getLocalItems: () => [{ itemId: 'default', data: useLocalHashGeneratorStore.getState() }],
-  schema: HashGeneratorSchema,
-})
-
-function useHashGeneratorStoreImpl(): HashGeneratorState {
-  const { status } = useAuth()
-  const local = useLocalHashGeneratorStore()
-  const cloud = useToolState(TOOL_ID, 'default', HashGeneratorSchema, DEFAULT_STATE)
-
-  if (status !== 'signed-in') return local
-
-  const data = cloud.data
-  return {
-    inputText: data.inputText,
-    hexCase: data.hexCase,
-    outputEncoding: data.outputEncoding,
-    showHmac: data.showHmac,
-    hmacKey: data.hmacKey,
-    activeTab: data.activeTab,
-    setInputText: (inputText) => cloud.setData({ ...data, inputText }),
-    setHexCase: (hexCase) => cloud.setData({ ...data, hexCase }),
-    setOutputEncoding: (outputEncoding) => cloud.setData({ ...data, outputEncoding }),
-    setShowHmac: (showHmac) => cloud.setData({ ...data, showHmac }),
-    setHmacKey: (hmacKey) => cloud.setData({ ...data, hmacKey }),
-    setActiveTab: (activeTab) => cloud.setData({ ...data, activeTab }),
-  }
-}
-
-export const useHashGeneratorStore = Object.assign(useHashGeneratorStoreImpl, {
-  getState: () => useLocalHashGeneratorStore.getState(),
-  setState: (partial: Partial<HashGeneratorState>) => useLocalHashGeneratorStore.setState(partial),
-})

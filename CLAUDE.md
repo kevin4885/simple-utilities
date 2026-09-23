@@ -45,18 +45,6 @@ src/
                     #   content.ts (SITE_URL, LANDING_COPY, truncateDescription — shared SEO
                     #   copy source), useDocumentMeta.ts (sets document.title / meta description
                     #   on client-side navigation), useMediaQuery.ts, useDebouncedValue.ts
-    supabase/       # client.ts — the single shared Supabase client instance (reads
-                    #   VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY)
-    auth/           # useAuth.tsx — AuthProvider + useAuth() context/hook wrapping Supabase
-                    #   Auth (Google sign-in). One onAuthStateChange subscription for the whole
-                    #   app; also fires the first-sign-in import sweep (see cloudState/).
-    cloudState/     # useToolState / useToolItemList — the generic auth-aware per-tool cloud
-                    #   state adapter (signed out: existing per-tool Zustand store, unchanged;
-                    #   signed in: React Query + Supabase `tool_state` table). importSweep.ts
-                    #   (pure decide-import-or-skip logic) + importSweep.io.ts (thin I/O,
-                    #   registerSweepTarget/runImportSweep) — the silent, idempotent, first
-                    #   sign-in local→cloud import. See src/lib/cloudState/CLAUDE.md-equivalent
-                    #   doc comments in each file for the full contract.
   components/
     ui/             # shadcn/ui components — source of truth is the files themselves
     editor/         # Shared editor components: CodeEditor, MarkdownRenderer (see editor/CLAUDE.md)
@@ -67,29 +55,9 @@ src/
     <category>/
       <tool-id>/    # One folder per tool — see src/tools/CLAUDE.md for the pattern
       writing/markdown-editor/export/  # export pipeline (pure builders + exportIo.ts) — reference pattern for export in any tool
-  main.tsx          # Mounts QueryClientProvider + AuthProvider above the router
+  main.tsx
   index.css         # Tailwind v4 @import + @theme inline + OKLCH tokens
 ```
-
-## Cloud state (Google sign-in, per-user Supabase storage)
-
-Signed out, every tool behaves exactly as it always has: state lives only in
-localStorage via each tool's own Zustand `persist` store. Signed in with
-Google, a tool built on `useToolState` (see `src/lib/cloudState/useToolState.ts`)
-instead reads/writes one row per `(user_id, tool_id, item_id)` in Supabase
-Postgres — `item_id` is `'default'` for single-blob tools, or a doc/item id
-for tools that manage several independent items. The two paths never sync or
-merge; a one-time, silent, idempotent import sweep (`src/lib/cloudState/
-importSweep.ts` + `.io.ts`) copies any existing local data into the cloud on
-first sign-in only, and only for a tool/item that has no cloud row yet.
-
-`supabase/migrations/0001_tool_state.sql` defines the `tool_state` table and
-its Row Level Security policies (every operation scoped to `auth.uid() =
-user_id`) — applied manually via the Supabase SQL editor/CLI, not by any
-build or test step in this repo. Every stateful tool (all `store.ts`-backed
-tools in `registry.ts`, including `markdown-editor`) is migrated onto
-`useToolState` and registered with the import sweep (`registerSweepTarget`)
-— see `swe/google-auth-cloud-state/` for the migration history.
 
 ## Route structure
 
@@ -193,12 +161,7 @@ for its own key. The only global key is `su:theme`.
 
 ## Constraints
 
-- A Supabase backend now exists for per-user cloud state and Google sign-in (external — not
-  hosted or run by this repo; see `src/lib/supabase/`, `src/lib/auth/`, `src/lib/cloudState/`,
-  and `supabase/migrations/`). Build-time env vars `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`
-  are required (see `.env.example`) — both are safe to expose client-side, since Supabase's anon
-  key relies on Postgres Row Level Security for safety, not secrecy. Signed out, every tool still
-  behaves exactly as before: localStorage only, no network calls.
+- Frontend only — no server-side code, no build-time secrets
 - All localStorage reads must be validated with Zod before use
 - Every tool with non-trivial logic gets a `logic.test.ts`
 - Import from `react-router` (not `react-router-dom` — that is the legacy v6 package)

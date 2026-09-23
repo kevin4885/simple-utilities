@@ -10,7 +10,6 @@ import { forwardRef, useImperativeHandle } from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, within, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import VisualMarkdownEditorPage from './index'
 import { useVmeStore, type VmeDoc } from './store'
 
@@ -93,28 +92,9 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-/**
- * `VisualMarkdownEditorPage` now always calls `useMarkdownEditorState()`,
- * which (per its own Rules-of-Hooks contract — see store.ts) unconditionally
- * mounts `useToolState`/`useToolItemList` alongside the local store, even
- * while signed out (the default `useAuth()` context value here is
- * `status: 'loading'`, so every test in this file exercises the SAME
- * signed-out/local-store path as before — this wrapper exists only because
- * those always-mounted cloud hooks need a `QueryClient` in the tree to not
- * throw, not because these tests are testing the cloud path at all).
- */
-function renderPage() {
-  const queryClient = new QueryClient()
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <VisualMarkdownEditorPage />
-    </QueryClientProvider>,
-  )
-}
-
 describe('VisualMarkdownEditorPage — version history wiring', () => {
   it('renders the Version history button; clicking it opens the drawer', async () => {
-    renderPage()
+    render(<VisualMarkdownEditorPage />)
     const button = screen.getByLabelText('Version history')
     expect(button).toBeInTheDocument()
 
@@ -124,7 +104,7 @@ describe('VisualMarkdownEditorPage — version history wiring', () => {
   })
 
   it('Restore updates the store content, adds a "Before restore" pin, and closes the drawer', async () => {
-    renderPage()
+    render(<VisualMarkdownEditorPage />)
     await userEvent.click(screen.getByLabelText('Version history'))
 
     await userEvent.click(screen.getByText('v1'))
@@ -147,7 +127,7 @@ describe('VisualMarkdownEditorPage — version history wiring', () => {
       docs: [makeDoc({ content: 'fresh content that differs from any version' })],
       activeDocId: 'doc1',
     })
-    renderPage()
+    render(<VisualMarkdownEditorPage />)
     await userEvent.click(screen.getByLabelText('Version history'))
 
     const before = useVmeStore.getState().docs[0].versions.length
@@ -160,7 +140,7 @@ describe('VisualMarkdownEditorPage — version history wiring', () => {
 
   it('opening the drawer in wysiwyg mode flushes the editor', async () => {
     useVmeStore.setState({ editorMode: 'wysiwyg' })
-    renderPage()
+    render(<VisualMarkdownEditorPage />)
     await userEvent.click(screen.getByLabelText('Version history'))
     expect(flushMock).toHaveBeenCalled()
   })
@@ -170,7 +150,7 @@ describe('VisualMarkdownEditorPage — version history wiring', () => {
       docs: [makeDoc({ id: 'doc1', title: 'Doc A' }), makeDoc({ id: 'doc2', title: 'Doc B', versions: [] })],
       activeDocId: 'doc1',
     })
-    renderPage()
+    render(<VisualMarkdownEditorPage />)
     await userEvent.click(screen.getByLabelText('Version history'))
     expect(screen.getAllByText('Version History').length).toBeGreaterThan(0)
 
@@ -187,7 +167,7 @@ describe('VisualMarkdownEditorPage — version history wiring', () => {
 describe('VisualMarkdownEditorPage — export wiring', () => {
   it('Export → Markdown (.md) flushes the wysiwyg editor first when in wysiwyg mode', async () => {
     useVmeStore.setState({ editorMode: 'wysiwyg' })
-    renderPage()
+    render(<VisualMarkdownEditorPage />)
 
     await userEvent.click(screen.getByLabelText('Export'))
     await userEvent.click(screen.getByRole('menuitem', { name: 'Markdown (.md)' }))

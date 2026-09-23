@@ -1,10 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
-
-const { registerSweepTargetMock } = vi.hoisted(() => ({ registerSweepTargetMock: vi.fn() }))
-vi.mock('@/lib/cloudState/importSweep.io', () => ({
-  registerSweepTarget: (...args: unknown[]) => registerSweepTargetMock(...args),
-}))
-
+import { describe, it, expect, beforeEach } from 'vitest'
 import { mergePersisted, usePepperoniRollsStore, PepperoniRollsSchema } from './store'
 import type { PepperoniRollsState } from './store'
 
@@ -120,26 +114,5 @@ describe('usePepperoniRollsStore setters', () => {
     usePepperoniRollsStore.getState().setBallWeight(150)
     expect(usePepperoniRollsStore.getState().rolls).toBe(6)
     expect(usePepperoniRollsStore.getState().ballWeight).toBe(150)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// Import-sweep registration (Phase 3b of google-auth-cloud-state)
-// ---------------------------------------------------------------------------
-describe('import-sweep registration', () => {
-  it("registers a sweep target with the correct toolId and getLocalItems() reflecting the local store's current data", () => {
-    expect(registerSweepTargetMock).toHaveBeenCalledTimes(1)
-    const target = registerSweepTargetMock.mock.calls[0][0]
-    expect(target.toolId).toBe('pepperoni-rolls')
-
-    usePepperoniRollsStore.setState({ rolls: 48, ballWeight: 120 })
-
-    const items = target.getLocalItems()
-    expect(items).toEqual([
-      {
-        itemId: 'default',
-        data: expect.objectContaining({ rolls: 48, ballWeight: 120 }),
-      },
-    ])
   })
 })

@@ -1,9 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { z } from 'zod'
-import { useAuth } from '@/lib/auth/useAuth'
-import { useToolState } from '@/lib/cloudState/useToolState'
-import { registerSweepTarget } from '@/lib/cloudState/importSweep.io'
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 
@@ -34,9 +31,9 @@ export function mergePersisted(
   return { ...current, ...result.data }
 }
 
-// ── Local (signed-out) store — unchanged behavior/localStorage key ─────────────
+// ── Store ─────────────────────────────────────────────────────────────────────
 
-const useLocalWordCounterStore = create<WordCounterState>()(
+export const useWordCounterStore = create<WordCounterState>()(
   persist(
     (set) => ({
       text: '',
@@ -52,59 +49,3 @@ const useLocalWordCounterStore = create<WordCounterState>()(
     },
   ),
 )
-
-// ── Cloud-backed state (Phase 3 of google-auth-cloud-state) ─────────────────────
-//
-// Single-blob tool: one `useToolState` row per user, `item_id = 'default'`
-// (byte-for-byte the same localStorage key the local store above already
-// uses, per the Phase 1 adapter's key-naming convention — see
-// `useToolState.ts`). Signed out: the local store above, unchanged. Signed
-// in: this cloud path, via the Phase 1 adapter, never redesigned here.
-
-const TOOL_ID = 'word-counter'
-
-const DEFAULT_STATE: WordCounterPersistedState = {
-  text: '',
-  excludeStopwords: true,
-}
-
-// Import-sweep registration (Phase 3b of google-auth-cloud-state): on first
-// sign-in, the sweep imports this tool's current local data into the cloud
-// if no cloud row exists yet for this user/tool. See importSweep.io.ts.
-registerSweepTarget({
-  toolId: TOOL_ID,
-  getLocalItems: () => [{ itemId: 'default', data: useLocalWordCounterStore.getState() }],
-  schema: WordCounterSchema,
-})
-
-/**
- * The hook `index.tsx` actually consumes (unchanged export name — `index.tsx`
- * is out of this phase's scope). Signed out (or auth status still
- * `'loading'`): the local Zustand `persist` store above, unchanged. Signed
- * in: the cloud-backed adapter.
- *
- * `.getState()`/`.setState()` are preserved as static methods (forwarding to
- * the local store) so any code relying on the zustand static API (this
- * tool currently has none, but see `store.test.ts` conventions used by
- * other tools in this phase) keeps working unchanged.
- */
-function useWordCounterStoreImpl(): WordCounterState {
-  const { status } = useAuth()
-  const local = useLocalWordCounterStore()
-  const cloud = useToolState(TOOL_ID, 'default', WordCounterSchema, DEFAULT_STATE)
-
-  if (status !== 'signed-in') return local
-
-  const data = cloud.data
-  return {
-    text: data.text,
-    excludeStopwords: data.excludeStopwords,
-    setText: (text) => cloud.setData({ ...data, text }),
-    setExcludeStopwords: (excludeStopwords) => cloud.setData({ ...data, excludeStopwords }),
-  }
-}
-
-export const useWordCounterStore = Object.assign(useWordCounterStoreImpl, {
-  getState: () => useLocalWordCounterStore.getState(),
-  setState: (partial: Partial<WordCounterState>) => useLocalWordCounterStore.setState(partial),
-})

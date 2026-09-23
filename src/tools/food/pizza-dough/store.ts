@@ -2,9 +2,6 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { z } from 'zod'
 import { type ThicknessName, DEFAULT_HYDRATION_REGULAR, DEFAULT_HYDRATION_GF } from './logic'
-import { useAuth } from '@/lib/auth/useAuth'
-import { useToolState } from '@/lib/cloudState/useToolState'
-import { registerSweepTarget } from '@/lib/cloudState/importSweep.io'
 
 /** Integer percentage defaults exposed so the UI and tests can reference them. */
 export const DEFAULT_HYDRATION_PCT_REGULAR = Math.round(DEFAULT_HYDRATION_REGULAR * 100) // 62
@@ -20,9 +17,7 @@ export const PizzaDoughSchema = z.object({
   hydration: z.number().int().min(50).max(90),
 })
 
-export type PizzaDoughPersistedState = z.infer<typeof PizzaDoughSchema>
-
-export type PizzaDoughState = PizzaDoughPersistedState & {
+export type PizzaDoughState = z.infer<typeof PizzaDoughSchema> & {
   setSize: (size: number) => void
   setQty: (qty: number) => void
   setThickness: (thickness: ThicknessName) => void
@@ -56,20 +51,14 @@ export function mergePersisted(persisted: unknown, current: PizzaDoughState): Pi
   }
 }
 
-const DEFAULT_STATE: PizzaDoughPersistedState = {
-  size: 16,
-  qty: 6,
-  thickness: 'regular' as ThicknessName,
-  glutenFree: false,
-  hydration: DEFAULT_HYDRATION_PCT_REGULAR,
-}
-
-// ── Local (signed-out) store — unchanged behavior/localStorage key ─────────────
-
-const useLocalPizzaDoughStore = create<PizzaDoughState>()(
+export const usePizzaDoughStore = create<PizzaDoughState>()(
   persist(
     (set) => ({
-      ...DEFAULT_STATE,
+      size: 16,
+      qty: 6,
+      thickness: 'regular' as ThicknessName,
+      glutenFree: false,
+      hydration: DEFAULT_HYDRATION_PCT_REGULAR,
 
       setSize: (size) => set({ size }),
       setQty: (qty) => set({ qty }),
@@ -89,48 +78,3 @@ const useLocalPizzaDoughStore = create<PizzaDoughState>()(
     },
   ),
 )
-
-// ── Cloud-backed state (Phase 3 of google-auth-cloud-state) ─────────────────────
-
-const TOOL_ID = 'pizza-dough'
-
-// Import-sweep registration (Phase 3b of google-auth-cloud-state): on first
-// sign-in, the sweep imports this tool's current local data into the cloud
-// if no cloud row exists yet for this user/tool. See importSweep.io.ts.
-registerSweepTarget({
-  toolId: TOOL_ID,
-  getLocalItems: () => [{ itemId: 'default', data: useLocalPizzaDoughStore.getState() }],
-  schema: PizzaDoughSchema,
-})
-
-function usePizzaDoughStoreImpl(): PizzaDoughState {
-  const { status } = useAuth()
-  const local = useLocalPizzaDoughStore()
-  const cloud = useToolState(TOOL_ID, 'default', PizzaDoughSchema, DEFAULT_STATE)
-
-  if (status !== 'signed-in') return local
-
-  const data = cloud.data
-  return {
-    size: data.size,
-    qty: data.qty,
-    thickness: data.thickness,
-    glutenFree: data.glutenFree,
-    hydration: data.hydration,
-    setSize: (size) => cloud.setData({ ...data, size }),
-    setQty: (qty) => cloud.setData({ ...data, qty }),
-    setThickness: (thickness) => cloud.setData({ ...data, thickness }),
-    setGlutenFree: (glutenFree) =>
-      cloud.setData({
-        ...data,
-        glutenFree,
-        hydration: glutenFree ? DEFAULT_HYDRATION_PCT_GF : DEFAULT_HYDRATION_PCT_REGULAR,
-      }),
-    setHydration: (hydration) => cloud.setData({ ...data, hydration }),
-  }
-}
-
-export const usePizzaDoughStore = Object.assign(usePizzaDoughStoreImpl, {
-  getState: () => useLocalPizzaDoughStore.getState(),
-  setState: (partial: Partial<PizzaDoughState>) => useLocalPizzaDoughStore.setState(partial),
-})

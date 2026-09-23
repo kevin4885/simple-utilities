@@ -1,10 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
-
-const { registerSweepTargetMock } = vi.hoisted(() => ({ registerSweepTargetMock: vi.fn() }))
-vi.mock('@/lib/cloudState/importSweep.io', () => ({
-  registerSweepTarget: (...args: unknown[]) => registerSweepTargetMock(...args),
-}))
-
+import { describe, it, expect, beforeEach } from 'vitest'
 import {
   mergePersisted,
   usePizzaDoughStore,
@@ -156,26 +150,5 @@ describe('usePizzaDoughStore.setGlutenFree', () => {
     // Toggle to GF — must reset to 80 regardless
     usePizzaDoughStore.getState().setGlutenFree(true)
     expect(usePizzaDoughStore.getState().hydration).toBe(DEFAULT_HYDRATION_PCT_GF)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// Import-sweep registration (Phase 3b of google-auth-cloud-state)
-// ---------------------------------------------------------------------------
-describe('import-sweep registration', () => {
-  it("registers a sweep target with the correct toolId and getLocalItems() reflecting the local store's current data", () => {
-    expect(registerSweepTargetMock).toHaveBeenCalledTimes(1)
-    const target = registerSweepTargetMock.mock.calls[0][0]
-    expect(target.toolId).toBe('pizza-dough')
-
-    usePizzaDoughStore.setState({ size: 14, qty: 4, thickness: 'thin', glutenFree: true, hydration: 80 })
-
-    const items = target.getLocalItems()
-    expect(items).toEqual([
-      {
-        itemId: 'default',
-        data: expect.objectContaining({ size: 14, qty: 4, thickness: 'thin', glutenFree: true, hydration: 80 }),
-      },
-    ])
   })
 })

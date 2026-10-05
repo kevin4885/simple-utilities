@@ -74,6 +74,14 @@ function makeTransparentBg(dark: boolean): Extension {
     },
     '.cm-activeLineGutter': { backgroundColor: 'rgba(128,128,128,0.08) !important' },
     '.cm-activeLine':       { backgroundColor: 'rgba(128,128,128,0.08) !important' },
+    '.cm-foldGutter span':  { cursor: 'pointer', padding: '0 3px' },
+    '.cm-foldPlaceholder':  {
+      backgroundColor: 'rgba(128,128,128,0.2)',
+      border: 'none',
+      color: 'inherit',
+      padding: '0 4px',
+      borderRadius: '3px',
+    },
   })
 }
 
@@ -89,6 +97,10 @@ export interface CodeEditorProps {
   readOnly?: boolean
   /** Pass false to strip all basicSetup features, or an options object to tune them. */
   basicSetup?: boolean | BasicSetupOptions
+  /** Show fold markers in the gutter so nested blocks can be collapsed. Default false. */
+  foldGutter?: boolean
+  /** Called with the EditorView once created (e.g. to run fold/unfold commands). */
+  onCreateEditor?: (view: EditorView) => void
 }
 
 export default function CodeEditor({
@@ -100,6 +112,8 @@ export default function CodeEditor({
   placeholder,
   readOnly = false,
   basicSetup,
+  foldGutter = false,
+  onCreateEditor,
 }: CodeEditorProps) {
   const [dark, setDark] = useState(() =>
     document.documentElement.classList.contains('dark'),
@@ -136,12 +150,13 @@ export default function CodeEditor({
       style={{ height }}
       placeholder={placeholder}
       readOnly={readOnly}
+      onCreateEditor={onCreateEditor}
       basicSetup={
         basicSetup !== undefined
           ? basicSetup
           : {
               lineNumbers:              true,
-              foldGutter:               false,
+              foldGutter,
               highlightActiveLine:      true,
               history:                  true,
               dropCursor:               false,

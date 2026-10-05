@@ -6,7 +6,9 @@
  * live validation, and Format / Minify / Copy / Clear actions.
  */
 
-import { useCallback, useDeferredValue, useState } from 'react'
+import { useCallback, useDeferredValue, useRef, useState } from 'react'
+import type { EditorView } from '@codemirror/view'
+import { foldable, foldEffect, unfoldAll } from '@codemirror/language'
 import CodeEditor from '@/components/editor/CodeEditor'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
@@ -21,6 +23,8 @@ import {
   CheckCircle2,
   XCircle,
   ArrowDownUp,
+  ChevronsDownUp,
+  ChevronsUpDown,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -76,6 +80,33 @@ export default function JsonFormatter() {
   }, [content, setContent])
 
   const handleClear = useCallback(() => setContent(''), [setContent])
+
+  // ── Folding ────────────────────────────────────────────────────────────────
+
+  const viewRef = useRef<EditorView | null>(null)
+  const handleCreateEditor = useCallback((view: EditorView) => {
+    viewRef.current = view
+  }, [])
+  const handleFoldAll = useCallback(() => {
+    const view = viewRef.current
+    if (!view) return
+    // Fold every nested block but keep the root object/array open, otherwise
+    // the whole document collapses to a single `{…}` line.
+    const { state } = view
+    const effects = []
+    for (let pos = 0; pos <= state.doc.length; ) {
+      const line = state.doc.lineAt(pos)
+      if (line.number > 1) {
+        const range = foldable(state, line.from, line.to)
+        if (range) effects.push(foldEffect.of(range))
+      }
+      pos = line.to + 1
+    }
+    if (effects.length) view.dispatch({ effects })
+  }, [])
+  const handleUnfoldAll = useCallback(() => {
+    if (viewRef.current) unfoldAll(viewRef.current)
+  }, [])
 
   // ── Indent toggle ──────────────────────────────────────────────────────────
 
@@ -190,6 +221,31 @@ export default function JsonFormatter() {
           Sort keys
         </button>
 
+        <Separator orientation="vertical" className="h-5 shrink-0" />
+
+        {/* Fold / unfold all nested blocks */}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleFoldAll}
+          disabled={!validation.ok}
+          className="gap-1.5"
+          title="Collapse all nested objects and arrays"
+        >
+          <ChevronsDownUp className="h-3.5 w-3.5" />
+          Fold all
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleUnfoldAll}
+          className="gap-1.5"
+          title="Expand all nested objects and arrays"
+        >
+          <ChevronsUpDown className="h-3.5 w-3.5" />
+          Unfold all
+        </Button>
+
         {/* Spacer + validation badge */}
         <div className="ml-auto">{validationBadge}</div>
       </div>
@@ -200,6 +256,8 @@ export default function JsonFormatter() {
           value={content}
           onChange={setContent}
           language="json"
+          foldGutter
+          onCreateEditor={handleCreateEditor}
           height="100%"
           placeholder='Paste or type JSON here…'
           className="h-full"

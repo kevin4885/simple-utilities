@@ -142,7 +142,18 @@ function blankedHeader(h: HeaderEntry, alsoByName: boolean): HeaderEntry {
 
 /** Copy of a profile that is safe for the persisted blob: secret header values are ''. */
 export function sanitizeProfileForStorage(p: Profile): Profile {
-  return { ...p, headers: p.headers.map((h) => blankedHeader(h, false)) }
+  return {
+    id: p.id,
+    name: p.name,
+    url: p.url,
+    transport: p.transport,
+    protocolVersion: p.protocolVersion,
+    headers: p.headers.map((h) => blankedHeader(h, false)),
+    persistSecrets: p.persistSecrets,
+    auth: { mode: p.auth.mode, scope: p.auth.scope, clientId: p.auth.clientId },
+    createdAt: p.createdAt,
+    updatedAt: p.updatedAt,
+  }
 }
 
 /**
@@ -226,7 +237,9 @@ export function importProfiles(text: string): ImportResult {
       protocolVersion: p.protocolVersion,
       headers: p.headers.map((h) => {
         const secret = h.secret ?? isSecretHeaderName(h.name)
-        return { id: newId(), name: h.name, value: secret ? '' : h.value, secret, enabled: h.enabled }
+        // A header that is secret by name never keeps its value, even if the file says secret:false.
+        const blank = secret || isSecretHeaderName(h.name)
+        return { id: newId(), name: h.name, value: blank ? '' : h.value, secret, enabled: h.enabled }
       }),
       persistSecrets: false,
       auth: { mode: p.auth.mode, scope: p.auth.scope, clientId: p.auth.clientId },

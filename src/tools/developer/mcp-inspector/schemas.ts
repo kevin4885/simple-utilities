@@ -12,8 +12,11 @@ export const MAX_IMPORT_PROFILES = 100
 
 export const TransportSchema = z.enum(['auto', 'streamable-http', 'sse'])
 
+// Ids become parts of secret keys (`hdr:<profileId>:<headerId>`), so they must not contain ':'.
+const IdSchema = z.string().min(1).regex(/^[^:]+$/, "id must not contain ':'")
+
 export const HeaderEntrySchema = z.object({
-  id: z.string().min(1),
+  id: IdSchema,
   name: z.string(),
   value: z.string(),
   secret: z.boolean(),
@@ -29,12 +32,15 @@ export const AuthSchema = z.object({
 export type ProfileAuth = z.infer<typeof AuthSchema>
 
 export const ProfileSchema = z.object({
-  id: z.string().min(1),
+  id: IdSchema,
   name: z.string().trim().min(1).max(MAX_PROFILE_NAME),
   url: z.string(),
   transport: TransportSchema,
   protocolVersion: z.string().nullable(),
-  headers: z.array(HeaderEntrySchema).max(MAX_HEADERS),
+  headers: z
+    .array(HeaderEntrySchema)
+    .max(MAX_HEADERS)
+    .refine((hs) => new Set(hs.map((h) => h.id)).size === hs.length, 'duplicate header id'),
   persistSecrets: z.boolean(),
   auth: AuthSchema,
   createdAt: z.number(),
@@ -45,7 +51,7 @@ export type Profile = z.infer<typeof ProfileSchema>
 export const HistoryEntrySchema = z.object({
   id: z.string().min(1),
   ts: z.number(),
-  profileId: z.string().min(1),
+  profileId: IdSchema,
   kind: z.enum(['tool', 'prompt', 'resource', 'raw']),
   name: z.string(),
   argsJson: z.string(),

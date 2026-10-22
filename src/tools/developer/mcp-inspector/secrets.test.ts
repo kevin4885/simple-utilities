@@ -107,6 +107,14 @@ describe('storage failures', () => {
     expect(getSecret('k')).toBe('v')
   })
 
+  it('delete helpers drop a corrupt secrets item so it cannot linger', () => {
+    localStorage.setItem(PERSISTED_SECRETS_KEY, '{corrupt')
+    sessionStorage.setItem(SESSION_SECRETS_KEY, JSON.stringify({ k: 1 }))
+    deleteSecretsWithPrefix('hdr:p:')
+    expect(localStorage.getItem(PERSISTED_SECRETS_KEY)).toBeNull()
+    expect(sessionStorage.getItem(SESSION_SECRETS_KEY)).toBeNull()
+  })
+
   it('delete helpers do not throw when storage throws', () => {
     setSecret('k', 'v', { persist: true })
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
@@ -179,13 +187,32 @@ describe('syncPersistedTier', () => {
     expect(getSecret('hdr:p:b')).toBe('both-session')
   })
 
-  it('persist=true copies matching session values into persisted storage, keeping session copies', () => {
+  it('persist=true moves matching session values into persisted storage; other session keys stay', () => {
     setSecret('hdr:p:a', 'S1', { persist: false })
     setSecret('oauth:p:verifier', 'VERIFIER', { persist: false })
     expect(syncPersistedTier(['hdr:p:'], true)).toBe(true)
     const local = JSON.parse(localStorage.getItem(PERSISTED_SECRETS_KEY)!)
     expect(local).toEqual({ 'hdr:p:a': 'S1' })
-    expect(sessionStorage.getItem(SESSION_SECRETS_KEY)).toContain('S1')
+    expect(JSON.parse(sessionStorage.getItem(SESSION_SECRETS_KEY)!)).toEqual({ 'oauth:p:verifier': 'VERIFIER' })
+    expect(getSecret('hdr:p:a')).toBe('S1')
+  })
+
+  it('after persist=true a later persisted write is not shadowed by a stale session copy', () => {
+    setSecret('oauth:p:tokens', 'OLD', { persist: false })
+    syncPersistedTier(['oauth:p:tokens'], true)
+    setSecret('oauth:p:tokens', 'REFRESHED', { persist: true })
+    expect(getSecret('oauth:p:tokens')).toBe('REFRESHED')
+  })
+
+  it('persist=true keeps the session copy when the persisted write is refused', () => {
+    setSecret('hdr:p:a', 'S1', { persist: false })
+    const real = Storage.prototype.setItem
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, k: string, v: string) {
+      if (this === window.localStorage) throw new Error('full')
+      return real.call(this, k, v)
+    })
+    expect(syncPersistedTier(['hdr:p:'], true)).toBe(false)
+    expect(getSecret('hdr:p:a')).toBe('S1')
   })
 
   it('persist=true with nothing to copy writes nothing', () => {

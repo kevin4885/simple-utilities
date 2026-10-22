@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PERSISTED_SECRETS_KEY, SESSION_SECRETS_KEY, getSecret, setSecret } from './secrets'
 import { STORE_KEY, mergePersisted, useMcpInspectorStore } from './store'
 import type { HeaderEntry, HistoryEntry, Profile } from './schemas'
@@ -53,6 +53,10 @@ beforeEach(() => {
   localStorage.clear()
   sessionStorage.clear()
   useMcpInspectorStore.setState({ profiles: [], activeProfileId: null, history: [], prefs: { saveHistory: true } })
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 const get = () => useMcpInspectorStore.getState()
@@ -218,6 +222,25 @@ describe('addProfile / updateProfile', () => {
     expect(get().profiles[0].name).toHaveLength(80)
   })
 
+  it('never stores unknown patch fields in the persisted blob', () => {
+    const p = get().addProfile()
+    get().updateProfile(p.id, { url: 'https://u.test', evil: 'LEAKFIELD' } as unknown as Partial<Profile>)
+    expect(mainBlob()).not.toContain('LEAKFIELD')
+    expect((get().profiles[0] as unknown as Record<string, unknown>).evil).toBeUndefined()
+    expect(get().profiles[0].url).toBe('https://u.test')
+  })
+
+  it('ignores a patch with duplicate header ids or an id containing a colon', () => {
+    const p = get().addProfile()
+    get().updateProfile(p.id, { headers: [hdr({ id: 'a', secret: false, value: '1' })] })
+    get().updateProfile(p.id, {
+      headers: [hdr({ id: 'd', secret: false, value: 'x' }), hdr({ id: 'd', secret: false, value: 'y' })],
+    })
+    expect(get().profiles[0].headers.map((h) => h.id)).toEqual(['a'])
+    get().updateProfile(p.id, { headers: [hdr({ id: 'a:b', secret: false, value: 'x' })] })
+    expect(get().profiles[0].headers.map((h) => h.id)).toEqual(['a'])
+  })
+
   it('ignores a patch that would make the profile invalid', () => {
     const p = get().addProfile()
     get().updateProfile(p.id, { transport: 'carrier-pigeon' } as unknown as Partial<Profile>)
@@ -336,7 +359,11 @@ describe('persistSecrets transitions', () => {
     const local = JSON.parse(localStorage.getItem(PERSISTED_SECRETS_KEY)!)
     expect(local).toEqual({ [`hdr:${id}:h1`]: 'H1', [`oauth:${id}:tokens`]: 'TOK', [`oauth:${id}:client`]: 'CLI' })
     expect(mainBlob()).not.toContain('H1')
-    expect(sessionStorage.getItem(SESSION_SECRETS_KEY)).toContain('H1')
+    // moved, not copied: verifier/state/other profiles stay session-only, persisted values are not shadowed
+    const session = JSON.parse(sessionStorage.getItem(SESSION_SECRETS_KEY)!)
+    expect(Object.keys(session).sort()).toEqual(['hdr:other:h', `oauth:${id}:state`, `oauth:${id}:verifier`].sort())
+    setSecret(`oauth:${id}:tokens`, 'TOK2', { persist: true })
+    expect(getSecret(`oauth:${id}:tokens`)).toBe('TOK2')
   })
 
   it('updating other fields does not touch secret storage', () => {
@@ -529,6 +556,5 @@ describe('persistence round trip', () => {
       throw new DOMException('full', 'QuotaExceededError')
     })
     expect(() => get().addProfile()).not.toThrow()
-    vi.restoreAllMocks()
   })
 })

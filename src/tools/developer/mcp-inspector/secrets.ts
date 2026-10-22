@@ -91,7 +91,15 @@ export function replaceSecret(key: string, value: string, o: { persist: boolean 
 
 function removeFromTier(tier: Tier, match: (key: string) => boolean): void {
   const map = readTier(tier)
-  if (!map) return
+  if (!map) {
+    // Unreadable (corrupt/tampered) content cannot be selectively cleaned: drop the whole item.
+    try {
+      storageFor(tier).removeItem(keyFor(tier))
+    } catch {
+      // storage unavailable: nothing more we can do
+    }
+    return
+  }
   const kept: SecretMap = {}
   let changed = false
   for (const k of Object.keys(map)) {
@@ -118,8 +126,10 @@ export function deleteSecretsWithPrefix(prefix: string): void {
 /**
  * Re-homes the secrets under the given key prefixes when a profile's `persistSecrets` flips.
  *  - persist=false: the persisted copies are removed from localStorage; session copies stay.
- *  - persist=true: session values are copied into the persisted tier (session copies stay).
- * Returns false if a write was refused.
+ *  - persist=true: session values are MOVED into the persisted tier. The session copy is removed
+ *    because the session tier wins on read: a stale session copy would otherwise shadow every
+ *    later persisted write (e.g. a refreshed OAuth token).
+ * Returns false if the persisted write was refused (nothing is removed from the session then).
  */
 export function syncPersistedTier(prefixes: string[], persist: boolean): boolean {
   const match = (k: string) => prefixes.some((p) => k.startsWith(p))
@@ -133,5 +143,7 @@ export function syncPersistedTier(prefixes: string[], persist: boolean): boolean
   if (moving.length === 0) return true
   const persisted = readForUpdate('persisted')
   for (const k of moving) persisted[k] = session[k]
-  return writeTier('persisted', persisted)
+  if (!writeTier('persisted', persisted)) return false
+  removeFromTier('session', (k) => moving.includes(k))
+  return true
 }

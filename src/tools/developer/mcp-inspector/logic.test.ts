@@ -159,6 +159,14 @@ describe('name and history helpers', () => {
 })
 
 describe('sanitizeProfileForStorage', () => {
+  it('copies only known profile fields', () => {
+    const s = sanitizeProfileForStorage({ ...profile(), evil: 'LEAK' } as Profile) as unknown as Record<string, unknown>
+    expect(s.evil).toBeUndefined()
+    expect(Object.keys(s).sort()).toEqual(
+      ['auth', 'createdAt', 'headers', 'id', 'name', 'persistSecrets', 'protocolVersion', 'transport', 'updatedAt', 'url'].sort(),
+    )
+  })
+
   it('blanks flagged-secret values only and does not mutate the input', () => {
     const p = profile({
       headers: [header({ id: 'a', name: 'Authorization', value: 'SECRET', secret: true }), header({ id: 'b', value: 'plain' })],
@@ -266,6 +274,7 @@ describe('importProfiles', () => {
           headers: [
             { name: 'X-One', value: 'LEAK1', secret: true },
             { name: 'Authorization', value: 'LEAK2' },
+            { name: 'X-Api-Key', value: 'LEAK3', secret: false },
             { name: 'X-Plain', value: 'ok', secret: false },
           ],
         },
@@ -276,6 +285,7 @@ describe('importProfiles', () => {
     expect(r.profiles[0].headers.map((h) => [h.secret, h.value])).toEqual([
       [true, ''],
       [true, ''],
+      [false, ''],
       [false, 'ok'],
     ])
   })

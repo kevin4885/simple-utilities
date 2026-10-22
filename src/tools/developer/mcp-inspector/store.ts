@@ -185,11 +185,12 @@ export const useMcpInspectorStore = create<McpInspectorState>()(
           createdAt: old.createdAt,
           updatedAt: Math.max(Date.now(), old.updatedAt + 1),
         }
-        if (!ProfileSchema.safeParse(merged).success) return
+        const checked = ProfileSchema.safeParse(merged)
+        if (!checked.success) return
 
         // Side effects on the secret storages only after the update is known to be valid.
-        const persist = merged.persistSecrets
-        let headers = merged.headers
+        const persist = checked.data.persistSecrets
+        let headers = checked.data.headers
         if (safePatch.headers) {
           const keep = new Set(safePatch.headers.filter((h) => h.secret).map((h) => h.id))
           for (const h of old.headers) {
@@ -201,7 +202,7 @@ export const useMcpInspectorStore = create<McpInspectorState>()(
           syncPersistedTier(persistableSecretPrefixes(id), persist)
         }
 
-        const next = sanitizeProfileForStorage({ ...merged, headers })
+        const next = sanitizeProfileForStorage({ ...checked.data, headers })
         set((s) => ({ profiles: s.profiles.map((p) => (p.id === id ? next : p)) }))
       },
 

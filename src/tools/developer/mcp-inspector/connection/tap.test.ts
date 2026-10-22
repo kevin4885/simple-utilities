@@ -104,6 +104,122 @@ describe('createFetchTap', () => {
     expect(JSON.stringify(logs)).not.toContain('SECRET123')
   })
 
+  describe('learning OAuth credentials (onLearn)', () => {
+    const jsonResponse = (body: unknown, type = 'application/json') =>
+      new Response(typeof body === 'string' ? body : JSON.stringify(body), { status: 200, headers: { 'content-type': type } })
+
+    it('reports tokens from a JSON response BEFORE logging it, and still hands the SDK an unread body', async () => {
+      const learned: string[][] = []
+      const logs: LogEntryInput[] = []
+      const tap = createFetchTap({
+        fetch: (async () => jsonResponse({ access_token: 'ACCESS-TOKEN-1', refresh_token: 'REFRESH-TOKEN-1', token_type: 'Bearer' })) as unknown as typeof fetch,
+        onLog: (e) => {
+          expect(learned.length).toBeGreaterThan(0) // learned first
+          logs.push(e)
+        },
+        now: () => 0,
+        onLearn: (f) => learned.push(f),
+      })
+      const res = await tap('https://auth.test/token', { method: 'POST' })
+      expect(learned.flat()).toEqual(['ACCESS-TOKEN-1', 'REFRESH-TOKEN-1'])
+      expect((await res.json()).access_token).toBe('ACCESS-TOKEN-1')
+      expect(logs).toHaveLength(1)
+    })
+
+    it('reports the code, verifier and client secret from a form-encoded request body', async () => {
+      const learned: string[][] = []
+      const tap = createFetchTap({
+        fetch: (async () => jsonResponse({})) as unknown as typeof fetch,
+        onLog: () => undefined,
+        now: () => 0,
+        onLearn: (f) => learned.push(f),
+      })
+      await tap('https://auth.test/token', {
+        method: 'POST',
+        body: new URLSearchParams({ grant_type: 'authorization_code', code: 'AUTH-CODE-1', code_verifier: 'VERIFIER-1', client_secret: 'CLIENT-SECRET-1', client_id: 'public' }),
+      })
+      expect(learned.flat().sort()).toEqual(['AUTH-CODE-1', 'CLIENT-SECRET-1', 'VERIFIER-1'])
+    })
+
+    it('reports a client secret from a JSON registration response', async () => {
+      const learned: string[][] = []
+      const tap = createFetchTap({
+        fetch: (async () => jsonResponse({ client_id: 'c', client_secret: 'CLIENT-SECRET-2' })) as unknown as typeof fetch,
+        onLog: () => undefined,
+        now: () => 0,
+        onLearn: (f) => learned.push(f),
+      })
+      await tap('https://auth.test/register', { method: 'POST', body: '{"redirect_uris":["https://a/cb"]}' })
+      expect(learned.flat()).toEqual(['CLIENT-SECRET-2'])
+    })
+
+    it('never reads an event stream (it would block on a long-lived SSE response)', async () => {
+      const learned: string[][] = []
+      let read = false
+      const sse = new Response(
+        new ReadableStream(
+          {
+            pull() {
+              read = true
+            },
+          },
+          { highWaterMark: 0 }, // pull only when something actually reads
+        ),
+        { status: 200, headers: { 'content-type': 'text/event-stream' } },
+      )
+      const tap = createFetchTap({ fetch: (async () => sse) as unknown as typeof fetch, onLog: () => undefined, now: () => 0, onLearn: (f) => learned.push(f) })
+      await tap('https://mcp.test/mcp')
+      expect(read).toBe(false)
+      expect(learned).toEqual([])
+    })
+
+    it('does nothing for ordinary bodies, binary content or when onLearn is not set', async () => {
+      const learned: string[][] = []
+      const tap = createFetchTap({
+        fetch: (async (_i: unknown, init?: RequestInit) =>
+          init?.method === 'GET' ? jsonResponse('{"tools":[]}') : new Response('access_token=nope', { status: 200, headers: { 'content-type': 'application/octet-stream' } })) as unknown as typeof fetch,
+        onLog: () => undefined,
+        now: () => 0,
+        onLearn: (f) => learned.push(f),
+      })
+      await tap('https://mcp.test/mcp', { method: 'GET' })
+      await tap('https://mcp.test/blob', { method: 'POST', body: 'hello' })
+      expect(learned).toEqual([])
+      const plain = createFetchTap({ fetch: (async () => jsonResponse({ access_token: 'ACCESS-TOKEN-9' })) as unknown as typeof fetch, onLog: () => undefined, now: () => 0 })
+      expect((await (await plain('https://auth.test/token')).json()).access_token).toBe('ACCESS-TOKEN-9')
+    })
+
+    it('reads at most a bounded prefix of a huge body and still hands the caller the whole body', async () => {
+      const learned: string[][] = []
+      const big = '{"access_token":"ACCESS-TOKEN-EARLY","pad":"' + 'x'.repeat(200_000) + '"}'
+      const tap = createFetchTap({
+        fetch: (async () => jsonResponse(big)) as unknown as typeof fetch,
+        onLog: () => undefined,
+        now: () => 0,
+        onLearn: (f) => learned.push(f),
+      })
+      const res = await tap('https://mcp.test/mcp')
+      expect(learned.flat()).toEqual(['ACCESS-TOKEN-EARLY']) // found in the scanned prefix
+      expect((await res.text()).length).toBe(big.length) // caller still gets everything
+    })
+
+    it('a read failure never breaks the request', async () => {
+      const tap = createFetchTap({
+        fetch: (async () => {
+          const r = jsonResponse({ access_token: 'ACCESS-TOKEN-1' })
+          r.clone = () => {
+            throw new Error('clone failed')
+          }
+          return r
+        }) as unknown as typeof fetch,
+        onLog: () => undefined,
+        now: () => 0,
+        onLearn: () => undefined,
+      })
+      expect((await tap('https://auth.test/token')).status).toBe(200)
+    })
+  })
+
   it('strips configured custom headers from requests that leave the server origin', async () => {
     const logs: LogEntryInput[] = []
     const inner = vi.fn<typeof fetch>(async () => response(200))

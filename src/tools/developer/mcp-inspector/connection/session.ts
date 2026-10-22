@@ -1,5 +1,6 @@
 import {
   Client,
+  type OAuthClientProvider,
   ProtocolError,
   SdkError,
   SdkErrorCode,
@@ -10,6 +11,7 @@ import {
   type Transport,
 } from '@modelcontextprotocol/client'
 import {
+  addFragments,
   classifyConnectionError,
   errorMessage,
   getHttpStatus,
@@ -18,6 +20,7 @@ import {
   scrubSecrets,
   secretFragments,
   validateServerUrl,
+  withSecretCapture,
 } from './logic'
 import { createFetchTap, TappedTransport } from './tap'
 import {
@@ -45,7 +48,7 @@ const ANY_RESULT: StandardSchemaV1<unknown, unknown> = {
 
 type LiveTransport = Transport & {
   terminateSession?: () => Promise<void>
-  finishAuth?: (code: string) => Promise<void>
+  finishAuth?: (code: string, iss?: string) => Promise<void>
 }
 
 interface Attempt {
@@ -107,12 +110,22 @@ export class McpSession {
   private disconnecting: Promise<void> | null = null
   private readonly notificationObservers = new Map<string, Set<(params: unknown) => void>>()
   private readonly now: () => number
+  /**
+   * Literal secrets scrubbed from everything this session logs or reports. Starts with the configured
+   * header values and GROWS at runtime with OAuth credentials (tokens, client secret, code, verifier);
+   * the HTTP tap holds this same array, so additions apply to it immediately.
+   */
   private readonly fragments: string[]
+  /** The caller's OAuth provider wrapped so credentials passing through it join the fragments list. */
+  private readonly authProvider: OAuthClientProvider | undefined
 
   constructor(private readonly opts: SessionOptions) {
     this.now = opts.now ?? Date.now
     // ConnectionConfig carries no per-header "secret" flag, so every configured value is scrubbed.
     this.fragments = secretFragments(opts.config.headers, true)
+    this.authProvider = opts.authProvider
+      ? withSecretCapture(opts.authProvider, (found) => addFragments(this.fragments, found))
+      : undefined
   }
 
   getState(): SessionState {
@@ -226,6 +239,7 @@ export class McpSession {
       // ConnectionConfig does not carry the profile's "secret" flag.
       secretHeaderNames: headerNames,
       secretFragments: this.fragments,
+      onLearn: (found) => addFragments(this.fragments, found),
       originGuard: { origin: parsed.origin, headerNames },
     })
     const headers: Record<string, string> = {}
@@ -237,7 +251,7 @@ export class McpSession {
       url: parsed,
       fetch: tappedFetch,
       headers,
-      authProvider: this.opts.authProvider,
+      authProvider: this.authProvider,
       protocolVersion: cfg.protocolVersion,
     }) as LiveTransport
     this.lastInner = inner
@@ -392,7 +406,7 @@ export class McpSession {
   // OAuth
   // -------------------------------------------------------------------------
 
-  async finishAuth(code: string): Promise<void> {
+  async finishAuth(code: string, iss?: string): Promise<void> {
     let transport: LiveTransport | null = this.authTransport
     if (!transport) {
       // Fresh, never-connected session (page-reload fallback): build a transport only to reach finishAuth().
@@ -413,10 +427,11 @@ export class McpSession {
           now: this.now,
           secretHeaderNames: cfg.headers.map((h) => h.name),
           secretFragments: this.fragments,
+          onLearn: (found) => addFragments(this.fragments, found),
           originGuard: { origin: parsed.origin, headerNames: cfg.headers.map((h) => h.name) },
         }),
         headers,
-        authProvider: this.opts.authProvider,
+        authProvider: this.authProvider,
         protocolVersion: cfg.protocolVersion,
       }) as LiveTransport
     }
@@ -424,7 +439,7 @@ export class McpSession {
       throw new Error('This transport does not support OAuth completion')
     }
     try {
-      await transport.finishAuth(code)
+      await transport.finishAuth(code, iss)
     } catch (e) {
       throw new Error(this.safe(errorMessage(e)))
     }

@@ -1,5 +1,5 @@
 import type { JSONRPCMessage, MessageExtraInfo, Transport, TransportSendOptions } from '@modelcontextprotocol/client'
-import { errorMessage, redactHeaders, redactUrl, scrubSecrets } from './logic'
+import { OAUTH_SECRET_HINT, errorMessage, redactHeaders, redactUrl, scrubSecrets } from './logic'
 import type { LogEntryInput } from './types'
 
 // The two log taps. Both are thin decorators: they forward everything unmodified and
@@ -16,8 +16,14 @@ export interface FetchTapOptions {
   now: () => number
   /** Header names (any case) whose values are always redacted, in addition to isSecretHeaderName. */
   secretHeaderNames?: string[]
-  /** Literal secret strings scrubbed out of error text. */
+  /** Literal secret strings scrubbed out of error text. The list is read live: strings added later are scrubbed too. */
   secretFragments?: string[]
+  /**
+   * Called with credentials the tap sees in OAuth traffic (access/refresh/id tokens, client secret,
+   * authorization code, PKCE verifier - in request or response bodies) BEFORE the response is handed
+   * back to the SDK, so the owner can add them to secretFragments.
+   */
+  onLearn?: (fragments: string[]) => void
   /**
    * Custom (user-configured) header names. They are removed from requests that leave the
    * MCP server's origin (OAuth discovery / token endpoints), so credentials typed for the
@@ -68,6 +74,77 @@ function requestMethod(input: RequestInfo | URL, init: RequestInit | undefined):
   return 'GET'
 }
 
+/** Members of OAuth bodies (JSON or form-encoded) whose values are credentials. */
+const BODY_SECRET_JSON = /"?(?:access_token|refresh_token|id_token|client_secret|registration_access_token)"?\s*:\s*"([^"]{4,})"/g
+const FORM_SECRET_MEMBERS = ['code', 'code_verifier', 'refresh_token', 'client_secret', 'access_token', 'id_token']
+
+function bodyText(body: BodyInit | null | undefined): string | null {
+  if (typeof body === 'string') return body
+  if (typeof URLSearchParams !== 'undefined' && body instanceof URLSearchParams) return body.toString()
+  return null
+}
+
+/** Credentials in a request body: form-encoded token requests and JSON registration requests. */
+function credentialsInRequestBody(body: BodyInit | null | undefined): string[] {
+  const text = bodyText(body)
+  if (!text) return []
+  const out: string[] = []
+  if (text.includes('=') && !text.trimStart().startsWith('{')) {
+    const params = new URLSearchParams(text)
+    for (const name of FORM_SECRET_MEMBERS) {
+      const v = params.get(name)
+      if (v && v.length >= 4) out.push(v)
+    }
+  }
+  return [...out, ...credentialsInText(text)]
+}
+
+function credentialsInText(text: string): string[] {
+  if (!OAUTH_SECRET_HINT.test(text)) return []
+  const out: string[] = []
+  for (const m of text.matchAll(BODY_SECRET_JSON)) out.push(m[1])
+  return out
+}
+
+/** OAuth token / registration documents are tiny; never read more than this from a response copy. */
+const MAX_SCANNED_RESPONSE_CHARS = 64 * 1024
+
+/** Reads at most MAX_SCANNED_RESPONSE_CHARS of a text stream, then cancels it. */
+async function readCapped(body: ReadableStream<Uint8Array>): Promise<string> {
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let text = ''
+  try {
+    while (text.length < MAX_SCANNED_RESPONSE_CHARS) {
+      const { done, value } = await reader.read()
+      if (done) break
+      text += decoder.decode(value, { stream: true })
+    }
+  } finally {
+    // NOT awaited: a tee branch's cancel() only settles once the OTHER branch (the caller's response)
+    // is cancelled or finished too, so awaiting it here would hang until the caller has read the body.
+    void reader.cancel().catch(() => undefined)
+  }
+  return text
+}
+
+/**
+ * Reads a bounded copy of a (non-streaming) response body and returns the credentials in it.
+ * Never throws. The caller's response is untouched (we read a clone, and stop early on big bodies).
+ */
+async function credentialsInResponse(response: Response): Promise<string[]> {
+  try {
+    const type = response.headers?.get?.('content-type')?.toLowerCase() ?? ''
+    // Event streams are long-lived: cloning and reading them would block / buffer forever.
+    if (type.includes('text/event-stream') || typeof response.clone !== 'function') return []
+    if (type && !/json|text\/|x-www-form-urlencoded/.test(type)) return []
+    const body = response.clone().body
+    return body ? credentialsInText(await readCapped(body)) : []
+  } catch {
+    return []
+  }
+}
+
 export function createFetchTap(o: FetchTapOptions): typeof fetch {
   const secretNames = o.secretHeaderNames ?? []
   const fragments = o.secretFragments ?? []
@@ -103,10 +180,18 @@ export function createFetchTap(o: FetchTapOptions): typeof fetch {
     }
 
     const requestHeaders = redactHeaders(headersToRecord(sendInit?.headers ?? requestInputHeaders(sendInput)), secretNames)
+    if (o.onLearn) {
+      const sent = credentialsInRequestBody(sendInit?.body)
+      if (sent.length > 0) o.onLearn(sent)
+    }
     const loggedUrl = scrubSecrets(redactUrl(url), fragments)
     const start = o.now()
     try {
       const response = await o.fetch(sendInput, sendInit)
+      if (o.onLearn) {
+        const received = await credentialsInResponse(response)
+        if (received.length > 0) o.onLearn(received)
+      }
       o.onLog({
         ts: o.now(),
         kind: 'http',

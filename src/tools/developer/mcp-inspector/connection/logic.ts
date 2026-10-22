@@ -137,6 +137,73 @@ export function scrubSecrets(text: string, fragments: string[]): string {
 }
 
 // ---------------------------------------------------------------------------
+// OAuth credentials (learned at runtime)
+// ---------------------------------------------------------------------------
+// Configured header values are known up front (secretFragments). OAuth credentials are only
+// known once the flow has produced them, so the session keeps ONE shared fragment list and
+// adds to it as tokens / client secrets are seen: when the provider saves or returns them
+// (withSecretCapture) and when an OAuth endpoint answers (oauthSecretFragments on the JSON body).
+
+/** JSON members of OAuth responses / stored credentials whose string values are credentials. */
+const OAUTH_SECRET_MEMBERS = ['access_token', 'refresh_token', 'id_token', 'client_secret', 'registration_access_token']
+
+/** Cheap pre-check so a body is only parsed when it can contain one of the members above. */
+export const OAUTH_SECRET_HINT = /access_token|refresh_token|id_token|client_secret|registration_access_token/
+
+/** Credential strings found in an OAuth token / client-registration object (anything else -> []). */
+export function oauthSecretFragments(value: unknown): string[] {
+  if (typeof value !== 'object' || value === null) return []
+  const out: string[] = []
+  for (const member of OAUTH_SECRET_MEMBERS) {
+    const v = (value as Record<string, unknown>)[member]
+    if (typeof v === 'string' && v.length >= MIN_SCRUB_LENGTH) out.push(v)
+  }
+  return out
+}
+
+/** Adds the fragments that are not yet in `target` (in place: taps hold a reference to the same list). */
+export function addFragments(target: string[], more: string[]): void {
+  for (const f of more) if (f.length >= MIN_SCRUB_LENGTH && !target.includes(f)) target.push(f)
+}
+
+/**
+ * Wraps an OAuthClientProvider so every credential that passes through it (tokens, client
+ * information, PKCE verifier - read or written) is reported to `learn` first. Everything else,
+ * including getters and the presence/absence of optional methods the SDK probes, is forwarded
+ * untouched.
+ */
+export function withSecretCapture<P extends object>(provider: P, learn: (fragments: string[]) => void): P {
+  const capture: Record<string, 'result' | 'arg' | 'verifierResult' | 'verifierArg'> = {
+    tokens: 'result',
+    clientInformation: 'result',
+    saveTokens: 'arg',
+    saveClientInformation: 'arg',
+    codeVerifier: 'verifierResult',
+    saveCodeVerifier: 'verifierArg',
+  }
+  return new Proxy(provider, {
+    get(target, prop) {
+      const value = Reflect.get(target, prop, target) as unknown
+      if (typeof value !== 'function') return value
+      const fn = (value as (...a: unknown[]) => unknown).bind(target)
+      const mode = typeof prop === 'string' ? capture[prop] : undefined
+      if (!mode) return fn
+      return (...args: unknown[]) => {
+        if (mode === 'arg') learn(oauthSecretFragments(args[0]))
+        if (mode === 'verifierArg' && typeof args[0] === 'string') learn([args[0]])
+        const result = fn(...args)
+        if (mode === 'result' || mode === 'verifierResult') {
+          const seen = (r: unknown) => learn(mode === 'verifierResult' ? (typeof r === 'string' ? [r] : []) : oauthSecretFragments(r))
+          // Learn synchronously when the provider answers synchronously, so nothing can be logged first.
+          if (result instanceof Promise) result.then(seen, () => undefined)
+          else seen(result)
+        }
+        return result
+      }
+    },
+  })
+}
+// ---------------------------------------------------------------------------
 // Error classification
 // ---------------------------------------------------------------------------
 

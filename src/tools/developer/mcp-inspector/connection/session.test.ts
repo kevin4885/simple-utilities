@@ -896,7 +896,16 @@ describe('finishAuth()', () => {
       transportFactory: () => ({ finishAuth, start: async () => undefined, close: async () => undefined, send: async () => undefined }) as unknown as Transport,
     })
     await h.session.finishAuth('the-code')
-    expect(finishAuth).toHaveBeenCalledWith('the-code')
+    expect(finishAuth).toHaveBeenCalledWith('the-code', undefined)
+  })
+
+  it('passes the RFC 9207 iss through to the transport unchanged', async () => {
+    const finishAuth = vi.fn(async () => undefined)
+    const h = harness({
+      transportFactory: () => ({ finishAuth, start: async () => undefined, close: async () => undefined, send: async () => undefined }) as unknown as Transport,
+    })
+    await h.session.finishAuth('the-code', 'https://as.test')
+    expect(finishAuth).toHaveBeenCalledWith('the-code', 'https://as.test')
   })
 
   it('after auth-required it reuses the transport of the failed attempt', async () => {
@@ -920,7 +929,7 @@ describe('finishAuth()', () => {
     expect(await h.session.connect()).toEqual({ status: 'auth-required' })
     await h.session.finishAuth('abc')
     expect(built).toHaveLength(1)
-    expect(finishAuth).toHaveBeenCalledWith('abc')
+    expect(finishAuth).toHaveBeenCalledWith('abc', undefined)
   })
 
   it('rejects with an Error (message scrubbed of secrets) when finishing fails, and when unsupported', async () => {

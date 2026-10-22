@@ -210,6 +210,18 @@ function RequestsSection() {
   )
 }
 
+// Server logs belong to one session; a numeric id avoids the global store holding on to a closed session.
+const sessionLogIds = new WeakMap<object, number>()
+let nextSessionLogId = 1
+function sessionLogId(session: object): number {
+  let id = sessionLogIds.get(session)
+  if (id === undefined) {
+    id = nextSessionLogId++
+    sessionLogIds.set(session, id)
+  }
+  return id
+}
+
 function rejectedText(e: unknown): string {
   return `The server rejected the log level: ${errorMessage(e)}`
 }
@@ -226,13 +238,14 @@ function LoggingSection({ session, info }: Pick<TabProps, 'session' | 'info'>) {
   // Observe inbound `notifications/message`. Logs belong to one session: a new connection starts a fresh list.
   useEffect(() => {
     const store = useClientPending.getState()
-    store.claimLogs(session)
+    store.claimLogs(sessionLogId(session))
     return session.onNotification('notifications/message', (params) => {
       const p = parseLogParams(params)
       useClientPending.getState().addServerLog({ ts: Date.now(), level: p.level, logger: p.logger, data: p.data })
     })
   }, [session])
 
+  // session.client throws synchronously when the session is no longer connected, hence the try around both.
   const send = async (next: LoggingLevel) => {
     try {
       await session.client.setLoggingLevel(next)
@@ -249,7 +262,10 @@ function LoggingSection({ session, info }: Pick<TabProps, 'session' | 'info'>) {
   // The select shows the saved level, so tell a freshly connected server about it once.
   useEffect(() => {
     if (!supported) return
-    session.client.setLoggingLevel(useClientSettings.getState().loggingLevel).catch((e: unknown) => setStatus(rejectedText(e)))
+    // Deferred a microtask so a synchronous throw of `session.client` (not connected) is caught like a rejection.
+    Promise.resolve()
+      .then(() => session.client.setLoggingLevel(useClientSettings.getState().loggingLevel))
+      .catch((e: unknown) => setStatus(rejectedText(e)))
   }, [session, supported])
 
   return (

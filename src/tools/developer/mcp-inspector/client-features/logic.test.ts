@@ -95,6 +95,10 @@ describe('needsReconnect', () => {
     expect(applied.rootsListChanged).toBe(false)
     expect(snapshotSettings(base, { roots: { listChanged: true } }).rootsListChanged).toBe(true)
   })
+  it('editing the roots of a feature that was and is off needs no reconnect', () => {
+    const off = snapshotSettings(DEFAULT_SETTINGS, {})
+    expect(needsReconnect(off, { ...DEFAULT_SETTINGS, roots: { enabled: false, items: [{ uri: 'file:///a', name: null }] } })).toBe(false)
+  })
   it('rootsSignature distinguishes order and names', () => {
     const a = { uri: 'file:///a', name: null }
     const b = { uri: 'file:///b', name: 'B' }
@@ -169,6 +173,11 @@ describe('analyzeUrl', () => {
       expect(a.refusal).toMatch(/Refused/)
     },
   )
+  it('returns the normalised href that is the string actually opened', () => {
+    expect(analyzeUrl('HTTPS://Example.TEST:443/a b').href).toBe('https://example.test/a%20b')
+    expect(analyzeUrl('javascript:alert(1)').href).toBeNull()
+    expect(analyzeUrl('nope').href).toBeNull()
+  })
   it('refuses text that is not a URL', () => {
     expect(analyzeUrl('not a url')).toMatchObject({ openable: false, host: null })
     expect(analyzeUrl('')).toMatchObject({ openable: false })

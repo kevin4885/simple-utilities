@@ -99,7 +99,8 @@ export function snapshotSettings(s: ClientSettings, caps: ClientCapabilities): A
 /** True when the settings now differ from what the live connection was configured with. */
 export function needsReconnect(applied: AppliedSnapshot | null, s: ClientSettings): boolean {
   if (applied === null) return false
-  const rootsEdited = applied.rootsKey !== rootsSignature(s.roots.items)
+  // Editing the list of a feature that is off (and was off at connect time) changes nothing the server sees.
+  const rootsEdited = (applied.roots || s.roots.enabled) && applied.rootsKey !== rootsSignature(s.roots.items)
   return (
     applied.roots !== s.roots.enabled ||
     applied.sampling !== s.sampling.enabled ||
@@ -172,6 +173,8 @@ export function parseElicitationParams(params: unknown): ElicitationView {
 export interface UrlAnalysis {
   /** `URL.host` (punycode for IDNs, with port), or null if it cannot be determined. */
   host: string | null
+  /** The normalised URL (URL.href) that is opened - the same parse the host above comes from. Null if unparsable. */
+  href: string | null
   /** True only for http: / https: URLs. */
   openable: boolean
   /** Why the link cannot be opened (shown instead of enabling Open), else null. */
@@ -184,12 +187,13 @@ export function analyzeUrl(url: string): UrlAnalysis {
   try {
     u = new URL(url)
   } catch {
-    return { host: null, openable: false, refusal: 'Refused: this is not a valid URL.', warnings: [] }
+    return { host: null, href: null, openable: false, refusal: 'Refused: this is not a valid URL.', warnings: [] }
   }
   const host = u.host === '' ? null : u.host
   if (u.protocol !== 'http:' && u.protocol !== 'https:') {
     return {
       host,
+      href: null,
       openable: false,
       refusal: `Refused: only http and https links can be opened (this link uses "${u.protocol}").`,
       warnings: [],
@@ -199,7 +203,7 @@ export function analyzeUrl(url: string): UrlAnalysis {
   if (u.username !== '' || u.password !== '') {
     warnings.push('This URL contains embedded credentials (text before the @). Check the host above carefully.')
   }
-  return { host, openable: true, refusal: null, warnings }
+  return { host, href: u.href, openable: true, refusal: null, warnings }
 }
 
 /** One line describing a request, for the pending / recent lists. */
@@ -236,7 +240,6 @@ export function buildElicitResult(action: ElicitAction, content?: Record<string,
   return action === 'accept' && content !== undefined ? { action, content } : { action }
 }
 
-/** Parses the raw-JSON fallback of a form elicitation; the answer must be a JSON object. */
 /** A form elicitation answer may only hold string, number, boolean or string[] values (MCP spec / SDK result schema). */
 export function validateElicitContent(content: Record<string, unknown>): string | null {
   for (const [k, v] of Object.entries(content)) {
@@ -250,6 +253,7 @@ export function validateElicitContent(content: Record<string, unknown>): string 
   return null
 }
 
+/** Parses the raw-JSON fallback of a form elicitation; the answer must be a JSON object. */
 export function parseRawContent(text: string): { ok: true; content: Record<string, unknown> } | { ok: false; error: string } {
   let parsed: unknown
   try {

@@ -222,7 +222,7 @@ function UrlElicitation({ request, message, url }: { request: PendingRequest; me
           size="sm"
           disabled={!analysis.openable}
           onClick={() => {
-            if (analysis.openable) window.open(url, '_blank', 'noopener,noreferrer')
+            if (analysis.openable && analysis.href !== null) window.open(analysis.href, '_blank', 'noopener,noreferrer')
           }}
         >
           Open link

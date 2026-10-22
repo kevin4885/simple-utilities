@@ -251,6 +251,24 @@ describe('ClientTab - logging', () => {
     expect(setLoggingLevel).toHaveBeenCalledWith('warning')
   })
 
+  it('does not crash when the session is no longer connected (client getter throws)', async () => {
+    const h = makeSession()
+    Object.defineProperty(h.session, 'client', {
+      get() {
+        throw new Error('not connected')
+      },
+    })
+    render(
+      <ClientTab
+        session={h.session}
+        info={info({ logging: {} })}
+        sessionOptions={{ config: { url: 'https://x.test/mcp', transport: 'auto', headers: [], protocolVersion: null } }}
+        profileId="p1"
+      />,
+    )
+    expect(await screen.findByRole('alert')).toHaveTextContent(/not connected/)
+  })
+
   it('shows an error when the server rejects the level', async () => {
     const h = makeSession()
     h.setLoggingLevel.mockRejectedValue(new Error('nope'))

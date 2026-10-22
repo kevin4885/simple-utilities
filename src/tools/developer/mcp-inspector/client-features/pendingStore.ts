@@ -52,8 +52,8 @@ interface PendingState {
   applied: { ctxId: number; snapshot: AppliedSnapshot } | null
   serverLogs: ServerLogEntry[]
   nextLogId: number
-  /** Session the current `serverLogs` belong to; a different session clears the list. */
-  logOwner: unknown
+  /** Id of the session the current `serverLogs` belong to; a different session clears the list. */
+  logOwner: number | null
   /** Queues a request FIFO and returns the promise the SDK handler awaits. */
   enqueue(input: EnqueueInput): Promise<unknown>
   /** Answers a request with a result. No-op when it is not pending any more. */
@@ -64,7 +64,7 @@ interface PendingState {
   disposeContext(ctxId: number, error: unknown): void
   setApplied(ctxId: number, snapshot: AppliedSnapshot): void
   clearApplied(ctxId: number): void
-  claimLogs(owner: unknown): void
+  claimLogs(owner: number): void
   addServerLog(e: Omit<ServerLogEntry, 'id'>): void
   clearServerLogs(): void
   reset(): void
@@ -77,7 +77,7 @@ const INITIAL = {
   applied: null as PendingState['applied'],
   serverLogs: [] as ServerLogEntry[],
   nextLogId: 1,
-  logOwner: null as unknown,
+  logOwner: null as number | null,
 }
 
 export const useClientPending = create<PendingState>()((set, get) => {

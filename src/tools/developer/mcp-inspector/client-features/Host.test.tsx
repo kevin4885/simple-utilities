@@ -91,6 +91,21 @@ describe('ClientFeatureHost', () => {
       expect(out.rejected[0]).toMatchObject({ code: -1, message: 'User rejected sampling request' })
     })
 
+    it('a pointer-down outside the dialog leaves the request pending', async () => {
+      const out = enqueue('sampling', SAMPLING)
+      render(<ClientFeatureHost />)
+      // Radix registers its outside-interaction listener on a deferred tick.
+      await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
+      fireEvent.pointerDown(document.body)
+      fireEvent.pointerUp(document.body)
+      fireEvent.click(document.body)
+      await settle()
+      expect(out.rejected).toEqual([])
+      expect(out.resolved).toEqual([])
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+      expect(useClientPending.getState().pending).toHaveLength(1)
+    })
+
     it('Escape (closing the dialog) rejects the request', async () => {
       const out = enqueue('sampling', SAMPLING)
       render(<ClientFeatureHost />)
@@ -226,9 +241,9 @@ describe('ClientFeatureHost', () => {
       expect(document.querySelector('a[href]')).toBeNull()
     })
 
-    it('Open link opens only on click, in a new tab with noopener,noreferrer', async () => {
+    it('Open link opens the normalised URL (the one the host above was read from) only on click, with noopener,noreferrer', async () => {
       const open = vi.spyOn(window, 'open').mockImplementation(() => null)
-      enqueue('elicitation', URL_REQ('https://login.example.test/x'))
+      enqueue('elicitation', URL_REQ('HTTPS://Login.Example.TEST:443/x'))
       render(<ClientFeatureHost />)
       await userEvent.setup().click(screen.getByRole('button', { name: 'Open link' }))
       expect(open).toHaveBeenCalledTimes(1)

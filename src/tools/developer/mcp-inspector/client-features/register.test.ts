@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Client } from '@modelcontextprotocol/client'
 import { createFakeServer, type FakeServer } from '../testing/fakeServer'
 import { createSession, type McpSession } from '../connection/session'
@@ -292,6 +292,56 @@ describe('per-client pending state (a late dispose of connection N must not touc
     expect(pendingNow()).toEqual([])
     expect(useClientPending.getState().recent[0]).toMatchObject({ outcome: expect.stringMatching(/^Cancelled/) })
     await good.client.close()
+  })
+
+  it('through real McpSessions: a slow disconnect of session A cannot reject session B\'s pending request', async () => {
+    setSettings({ sampling: { enabled: true } })
+    const shared = createClientFeatureSetup() // one setup instance shared by both sessions, like the app
+
+    let releaseTerminate: () => void = () => undefined
+    let terminateStarted = false
+    const fakeA = createFakeServer({ sessionId: 'sess-a' })
+    ;(fakeA.clientTransport as unknown as { terminateSession: () => Promise<void> }).terminateSession = () =>
+      new Promise<void>((r) => {
+        terminateStarted = true
+        releaseTerminate = r
+      })
+    const fakeB = createFakeServer()
+    const mk = (fake: FakeServer) =>
+      createSession({
+        config: CONFIG,
+        onLog: () => undefined,
+        onState: () => undefined,
+        clientSetup: shared,
+        transportFactory: () => fake.clientTransport,
+      })
+    const sessionA = mk(fakeA)
+    const sessionB = mk(fakeB)
+    open.push({ session: sessionA, fake: fakeA }, { session: sessionB, fake: fakeB })
+
+    expect((await sessionA.connect()).status).toBe('connected')
+    const disconnectingA = sessionA.disconnect() // stuck in terminateSession(): A's dispose() has not run yet
+    await vi.waitFor(() => expect(terminateStarted).toBe(true))
+
+    expect((await sessionB.connect()).status).toBe('connected') // B's configure() runs BEFORE A's dispose()
+    const replyB = fakeB.sendRequest('sampling/createMessage', SAMPLING)
+    await waitForPending(1)
+    const requestB = pendingNow()[0]
+
+    releaseTerminate() // A's dispose() now lands after B's configure()
+    await disconnectingA
+
+    expect(pendingNow().map((p) => p.id)).toEqual([requestB.id]) // untouched
+    expect(useClientPending.getState().applied?.snapshot.sampling).toBe(true)
+    useClientPending.getState().answer(
+      requestB.id,
+      { role: 'assistant', content: { type: 'text', text: 'ok' }, model: 'manual', stopReason: 'endTurn' },
+      'Approved',
+    )
+    expect(await replyB).toMatchObject({ result: { content: { text: 'ok' } } })
+
+    await sessionB.disconnect() // B's own dispose still cleans up after it
+    expect(useClientPending.getState().applied).toBeNull()
   })
 
   it('a stray dispose() with nothing configured is harmless', () => {

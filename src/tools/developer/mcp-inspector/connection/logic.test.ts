@@ -10,17 +10,20 @@ import {
   UnauthorizedError,
 } from '@modelcontextprotocol/client'
 import {
+  addFragments,
   classifyConnectionError,
   collectPages,
   getHttpStatus,
   isLoopbackHost,
   isSecretHeaderName,
   mixedContentRisk,
+  oauthSecretFragments,
   redactHeaders,
   redactUrl,
   scrubSecrets,
   secretFragments,
   validateServerUrl,
+  withSecretCapture,
 } from './logic'
 
 describe('validateServerUrl', () => {
@@ -122,6 +125,71 @@ describe('redactUrl / secretFragments / scrubSecrets', () => {
   })
   it('scrubs every occurrence', () => {
     expect(scrubSecrets('x SECRET123 y SECRET123', ['SECRET123'])).toBe('x [redacted] y [redacted]')
+  })
+})
+
+describe('OAuth credential scrubbing helpers', () => {
+  it('oauthSecretFragments picks credential members of token / registration objects only', () => {
+    expect(
+      oauthSecretFragments({
+        access_token: 'ACCESS1',
+        refresh_token: 'REFRESH1',
+        id_token: 'IDTOKEN1',
+        client_secret: 'SECRET01',
+        registration_access_token: 'REGTOKEN1',
+        token_type: 'Bearer',
+        client_id: 'public-id',
+        expires_in: 3600,
+      }),
+    ).toEqual(['ACCESS1', 'REFRESH1', 'IDTOKEN1', 'SECRET01', 'REGTOKEN1'])
+  })
+
+  it('ignores non-objects, non-strings and values too short to scrub safely', () => {
+    expect(oauthSecretFragments(null)).toEqual([])
+    expect(oauthSecretFragments('access_token')).toEqual([])
+    expect(oauthSecretFragments({ access_token: 5, refresh_token: 'abc' })).toEqual([])
+  })
+
+  it('addFragments appends in place, skipping duplicates and short strings', () => {
+    const target = ['KEEP1234']
+    addFragments(target, ['KEEP1234', 'NEW56789', 'ab'])
+    expect(target).toEqual(['KEEP1234', 'NEW56789'])
+  })
+
+  it('withSecretCapture reports tokens/client info/verifier read or written, and forwards everything', async () => {
+    const learned: string[][] = []
+    const inner = {
+      redirectUrl: 'https://app.test/cb',
+      marker: 'untouched',
+      tokens: () => ({ access_token: 'ACCESS-READ' }),
+      asyncTokens: undefined,
+      clientInformation: async () => ({ client_id: 'c', client_secret: 'CLIENT-SECRET-READ' }),
+      saveTokens(t: { access_token: string }) {
+        return t.access_token
+      },
+      saveCodeVerifier: (v: string) => v,
+      codeVerifier: () => 'VERIFIER-READ',
+      redirectToAuthorization: (u: string) => `go:${u}`,
+    }
+    const wrapped = withSecretCapture(inner, (f) => learned.push(f))
+    expect(wrapped.redirectUrl).toBe('https://app.test/cb')
+    expect(wrapped.marker).toBe('untouched')
+    expect(wrapped.redirectToAuthorization('u')).toBe('go:u')
+    expect(wrapped.tokens()).toEqual({ access_token: 'ACCESS-READ' })
+    expect(await wrapped.clientInformation()).toEqual({ client_id: 'c', client_secret: 'CLIENT-SECRET-READ' })
+    expect(wrapped.saveTokens({ access_token: 'ACCESS-WRITTEN' })).toBe('ACCESS-WRITTEN')
+    wrapped.saveCodeVerifier('VERIFIER-WRITTEN')
+    expect(wrapped.codeVerifier()).toBe('VERIFIER-READ')
+    await Promise.resolve()
+    expect(learned.flat().sort()).toEqual(
+      ['ACCESS-READ', 'ACCESS-WRITTEN', 'CLIENT-SECRET-READ', 'VERIFIER-READ', 'VERIFIER-WRITTEN'].sort(),
+    )
+  })
+
+  it('withSecretCapture keeps optional methods absent (the SDK probes for them) and survives a throwing provider', () => {
+    const wrapped = withSecretCapture({ tokens: () => { throw new Error('boom') } } as { tokens(): unknown; saveDiscoveryState?: () => void }, () => undefined)
+    expect(wrapped.saveDiscoveryState).toBeUndefined()
+    expect(() => wrapped.tokens()).toThrow('boom')
   })
 })
 

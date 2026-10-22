@@ -42,6 +42,8 @@ interface NetworkOptions {
   tokenAuthMethods?: string[]
   /** Method the dynamic registration assigns to the new client (default 'none' = public client). */
   registeredAuthMethod?: string
+  /** Adds uthorization_response_iss_parameter_supported: true to the AS metadata (RFC 9207). */
+  issParameterSupported?: boolean
 }
 
 /** protected-resource metadata + AS metadata + /register + /token + an OAuth-protected MCP endpoint. */
@@ -97,6 +99,7 @@ function fakeNetwork(opts: NetworkOptions = {}) {
           grant_types_supported: ['authorization_code', 'refresh_token'],
           code_challenge_methods_supported: ['S256'],
           token_endpoint_auth_methods_supported: opts.tokenAuthMethods ?? ['none'],
+          ...(opts.issParameterSupported ? { authorization_response_iss_parameter_supported: true } : {}),
         })
       }
       if (url.pathname === '/register' && method === 'POST') {
@@ -274,6 +277,83 @@ describe('McpSession + real transport + OAuth provider', () => {
     const authorized = net.seen.filter((r) => r.url === MCP_URL && r.headers.authorization === `Bearer ${ACCESS}`)
     expect(authorized.length).toBeGreaterThan(0)
     await h.session.disconnect()
+  })
+
+  describe('RFC 9207 iss end-to-end (criterion 15)', () => {
+    const tokenRequests = (net: ReturnType<typeof fakeNetwork>) => net.seen.filter((r) => r.url === `${AS}/token`)
+
+    async function signIn(net: ReturnType<typeof fakeNetwork>, iss: string | undefined) {
+      const h = harness(net, provider())
+      expect((await h.session.connect()).status).toBe('auth-required')
+      const error = await h.session.finishAuth(CODE, iss).then(
+        () => null,
+        (e: Error) => e,
+      )
+      return { h, error }
+    }
+
+    function expectRejectedWithoutExchange(net: ReturnType<typeof fakeNetwork>, h: ReturnType<typeof harness>, error: Error | null) {
+      expect(error).toBeInstanceOf(Error)
+      expect(tokenRequests(net)).toHaveLength(0)
+      expect(getSecret('oauth:p1:tokens')).toBeNull()
+      // the error text reaches the caller scrubbed of credentials (existing scrub rule still holds)
+      for (const s of [ACCESS, REFRESH, CLIENT_SECRET, CODE]) expect(error!.message).not.toContain(s)
+      const dump = JSON.stringify([h.logs, h.states])
+      for (const s of [ACCESS, REFRESH, CLIENT_SECRET, CODE]) expect(dump).not.toContain(s)
+    }
+
+    it('(a) advertised support + iss equal to the metadata issuer -> succeeds and stores tokens', async () => {
+      const net = fakeNetwork({ issParameterSupported: true })
+      const { h, error } = await signIn(net, AS)
+      expect(error).toBeNull()
+      expect(tokenRequests(net)).toHaveLength(1)
+      expect(JSON.parse(getSecret('oauth:p1:tokens')!).access_token).toBe(ACCESS)
+      expect((await h.session.connect()).status).toBe('connected')
+      await h.session.disconnect()
+    })
+
+    it('(b) advertised support + iss omitted -> rejected with IssuerMismatchError, no token request, no tokens', async () => {
+      const net = fakeNetwork({ issParameterSupported: true })
+      const { h, error } = await signIn(net, undefined)
+      expectRejectedWithoutExchange(net, h, error)
+      expect(error!.message).toMatch(/issuer/i)
+    })
+
+    it('(c) advertised support + a different iss -> rejected, no token request, no tokens', async () => {
+      const net = fakeNetwork({ issParameterSupported: true })
+      const { h, error } = await signIn(net, 'https://evil.test')
+      expectRejectedWithoutExchange(net, h, error)
+      expect(error!.message).toMatch(/issuer/i)
+    })
+
+    it('(d) no advertised support and no iss -> succeeds (backward compatible)', async () => {
+      const net = fakeNetwork()
+      const { error } = await signIn(net, undefined)
+      expect(error).toBeNull()
+      expect(tokenRequests(net)).toHaveLength(1)
+      expect(JSON.parse(getSecret('oauth:p1:tokens')!).access_token).toBe(ACCESS)
+    })
+
+    it('(e) no advertised support but a mismatching iss -> rejected, no token request, no tokens', async () => {
+      const net = fakeNetwork()
+      const { h, error } = await signIn(net, 'https://evil.test')
+      expectRejectedWithoutExchange(net, h, error)
+    })
+
+    it('the page-reload path (a fresh never-connected session) validates iss too', async () => {
+      const net = fakeNetwork({ issParameterSupported: true })
+      // sign-in started by an earlier page load: discovery state, verifier and client are in storage
+      const first = harness(net, provider())
+      expect((await first.session.connect()).status).toBe('auth-required')
+      const fresh = harness(net, provider())
+      const error = await fresh.session.finishAuth(CODE, 'https://evil.test').then(
+        () => null,
+        (e: Error) => e,
+      )
+      expectRejectedWithoutExchange(net, fresh, error)
+      await expect(harness(net, provider()).session.finishAuth(CODE, AS)).resolves.toBeUndefined()
+      expect(tokenRequests(net)).toHaveLength(1)
+    })
   })
 
   describe('token scrubbing (carry-forward from the P1 review)', () => {

@@ -70,12 +70,21 @@ describe('OAuthCallbackPage (popup flow)', () => {
       type: 'mcp-oauth-callback',
       state: 'STATE-1',
       code: 'CODE-1',
+      iss: null,
       error: null,
       errorDescription: null,
     }
     expect(FakeChannel.posted[0].data).toEqual(expected)
     expect(FakeChannel.instances.every((c) => c.closed)).toBe(true)
     expect(closeSpy).toHaveBeenCalled()
+  })
+
+  it('includes the RFC 9207 iss in the one posted message', async () => {
+    visit('?code=CODE-1&state=STATE-1&iss=https%3A%2F%2Fas.test')
+    renderPage()
+    await screen.findByText(/Authorization complete/)
+    expect(FakeChannel.posted).toHaveLength(1)
+    expect(FakeChannel.posted[0].data).toMatchObject({ code: 'CODE-1', state: 'STATE-1', iss: 'https://as.test' })
   })
 
   it('never renders the authorization code or state', async () => {
@@ -138,12 +147,21 @@ describe('OAuthCallbackPage (full-page fallback)', () => {
       profileId: 'p1',
       code: 'CODE-1',
       state: 'STATE-1',
+      iss: null,
       error: null,
       errorDescription: null,
     })
     expect(FakeChannel.posted).toHaveLength(0)
     expect(closeSpy).not.toHaveBeenCalled()
     expect(window.location.search).toBe('')
+  })
+
+  it('keeps the RFC 9207 iss in the marker', async () => {
+    setSecret('oauth:pending-return', JSON.stringify({ profileId: 'p1' }), { persist: false })
+    visit('?code=CODE-1&state=STATE-1&iss=https%3A%2F%2Fas.test')
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('where')).toBeInTheDocument())
+    expect(JSON.parse(getSecret('oauth:pending-return')!)).toMatchObject({ profileId: 'p1', code: 'CODE-1', state: 'STATE-1', iss: 'https://as.test' })
   })
 
   it('keeps a provider error in the marker so the tool can report it', async () => {

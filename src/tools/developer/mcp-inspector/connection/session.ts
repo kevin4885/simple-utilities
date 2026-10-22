@@ -48,7 +48,7 @@ const ANY_RESULT: StandardSchemaV1<unknown, unknown> = {
 
 type LiveTransport = Transport & {
   terminateSession?: () => Promise<void>
-  finishAuth?: (code: string) => Promise<void>
+  finishAuth?: (code: string, iss?: string) => Promise<void>
 }
 
 interface Attempt {
@@ -406,7 +406,7 @@ export class McpSession {
   // OAuth
   // -------------------------------------------------------------------------
 
-  async finishAuth(code: string): Promise<void> {
+  async finishAuth(code: string, iss?: string): Promise<void> {
     let transport: LiveTransport | null = this.authTransport
     if (!transport) {
       // Fresh, never-connected session (page-reload fallback): build a transport only to reach finishAuth().
@@ -439,7 +439,7 @@ export class McpSession {
       throw new Error('This transport does not support OAuth completion')
     }
     try {
-      await transport.finishAuth(code)
+      await transport.finishAuth(code, iss)
     } catch (e) {
       throw new Error(this.safe(errorMessage(e)))
     }

@@ -246,7 +246,7 @@ describe('useConnection', () => {
     it('selects the profile, calls session.finishAuth(code), then connects', async () => {
       const target = profile({ id: 'p2', name: 'Two' })
       useMcpInspectorStore.setState({ profiles: [profile(), target], activeProfileId: 'p1' })
-      vi.mocked(consumePendingOAuthReturn).mockReturnValueOnce({ profileId: 'p2', code: 'the-code', state: 's' })
+      vi.mocked(consumePendingOAuthReturn).mockReturnValueOnce({ profileId: 'p2', code: 'the-code', state: 's', iss: null })
       const h = harness()
       const finish = vi.fn(async () => undefined)
       const base = h.createSessionFn
@@ -257,9 +257,25 @@ describe('useConnection', () => {
       }
       const { result } = renderHook(() => useConnection(target, { createSessionFn: fn }))
       await waitFor(() => expect(result.current.state.status).toBe('connected'))
-      expect(finish).toHaveBeenCalledWith('the-code')
+      expect(finish).toHaveBeenCalledWith('the-code', undefined)
       expect(useMcpInspectorStore.getState().activeProfileId).toBe('p2')
       expect(consumePendingOAuthReturn).toHaveBeenCalledTimes(1)
+    })
+
+    it('forwards the returned RFC 9207 iss to session.finishAuth', async () => {
+      useMcpInspectorStore.setState({ profiles: [profile()], activeProfileId: 'p1' })
+      vi.mocked(consumePendingOAuthReturn).mockReturnValueOnce({ profileId: 'p1', code: 'the-code', state: 's', iss: 'https://as.test' })
+      const h = harness()
+      const finish = vi.fn(async () => undefined)
+      const base = h.createSessionFn
+      const fn: typeof createSession = (opts) => {
+        const s = base(opts)
+        s.finishAuth = finish
+        return s
+      }
+      const { result } = renderHook(() => useConnection(profile(), { createSessionFn: fn }))
+      await waitFor(() => expect(result.current.state.status).toBe('connected'))
+      expect(finish).toHaveBeenCalledWith('the-code', 'https://as.test')
     })
 
     it('does nothing when there is no pending return', async () => {
@@ -274,7 +290,7 @@ describe('useConnection', () => {
 
     it('reports an error when finishAuth fails', async () => {
       useMcpInspectorStore.setState({ profiles: [profile()], activeProfileId: 'p1' })
-      vi.mocked(consumePendingOAuthReturn).mockReturnValueOnce({ profileId: 'p1', code: 'bad', state: 's' })
+      vi.mocked(consumePendingOAuthReturn).mockReturnValueOnce({ profileId: 'p1', code: 'bad', state: 's', iss: null })
       const h = harness()
       const base = h.createSessionFn
       const fn: typeof createSession = (opts) => {

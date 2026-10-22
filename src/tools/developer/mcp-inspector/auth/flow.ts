@@ -33,9 +33,60 @@ function describeCallbackError(message: OAuthCallbackMessage): string {
   return message.errorDescription ? `${code}: ${message.errorDescription}` : code
 }
 
+// ── Lost-message buffer ──────────────────────────────────────────────────────
+// `redirectToAuthorization` opens the popup, but `completeAuthorization` only starts listening after
+// `connect()` has returned `auth-required`. A fast redirect can post its callback message in between,
+// and a BroadcastChannel does not replay messages to listeners created later. So from the moment the
+// popup opens, one module-level listener keeps the most recent callback message in a single slot
+// until `completeAuthorization` takes it. Nothing is validated here: the taker checks `state`.
+// The buffer stops (listener closed, slot cleared) when it is taken, on abort, when a new sign-in
+// starts, and after 5 minutes.
+
+let bufferChannel: BroadcastChannel | null = null
+let bufferSlot: OAuthCallbackMessage | null = null
+let bufferTimer: ReturnType<typeof setTimeout> | null = null
+
+/** Closes the buffer's listener and empties its slot. Safe to call at any time. */
+export function stopCallbackBuffer(): void {
+  if (bufferTimer !== null) clearTimeout(bufferTimer)
+  bufferTimer = null
+  if (bufferChannel !== null) {
+    bufferChannel.onmessage = null
+    bufferChannel.close()
+  }
+  bufferChannel = null
+  bufferSlot = null
+}
+
+/** Starts (or restarts) buffering. provider.ts calls this right after it opened the sign-in popup. */
+export function startCallbackBuffer(): void {
+  stopCallbackBuffer()
+  if (typeof BroadcastChannel === 'undefined') return
+  try {
+    const channel = new BroadcastChannel(OAUTH_CHANNEL)
+    channel.onmessage = (event: MessageEvent) => {
+      const data: unknown = event.data
+      if (isOAuthCallbackMessage(data)) bufferSlot = data
+    }
+    bufferChannel = channel
+  } catch {
+    return // no buffering; completeAuthorization still works for any redirect that is not faster than it
+  }
+  bufferTimer = setTimeout(stopCallbackBuffer, AUTH_TIMEOUT_MS)
+}
+
+/** Returns the buffered message (or null) and stops the buffer: the caller listens by itself from now on. */
+function takeBufferedMessage(): OAuthCallbackMessage | null {
+  const message = bufferSlot
+  stopCallbackBuffer()
+  return message
+}
+
 /**
  * Waits for the authorization response of the sign-in this session just started, verifies its
- * `state`, then calls `session.finishAuth(code)` exactly once.
+ * `state`, then calls `session.finishAuth(code, iss)` exactly once (`iss` is the RFC 9207 issuer
+ * parameter of the response, passed through unchanged, or `undefined` when the response had none).
+ *  - a response that arrived before this call (see the lost-message buffer above) is handled first;
  *  - resolves once finishAuth succeeded;
  *  - rejects with Error(message) on a provider error, a finishAuth failure or after 5 minutes of silence;
  *  - rejects with a DOMException named AbortError when `signal` aborts.
@@ -45,10 +96,12 @@ function describeCallbackError(message: OAuthCallbackMessage): string {
 export function completeAuthorization(session: McpSession, profileId: string, signal: AbortSignal): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     if (signal.aborted) {
+      stopCallbackBuffer()
       reject(abortError())
       return
     }
     if (typeof BroadcastChannel === 'undefined') {
+      stopCallbackBuffer()
       reject(new Error('This browser does not support BroadcastChannel, which the sign-in popup needs.'))
       return
     }
@@ -67,17 +120,13 @@ export function completeAuthorization(session: McpSession, profileId: string, si
       if (outcome.ok) resolve()
       else reject(outcome.error)
     }
-    const onAbort = (): void => finish({ ok: false, error: abortError() })
+    const onAbort = (): void => {
+      stopCallbackBuffer()
+      finish({ ok: false, error: abortError() })
+    }
 
-    signal.addEventListener('abort', onAbort, { once: true })
-    const timer = setTimeout(
-      () => finish({ ok: false, error: new Error('Timed out waiting for authorization (5 minutes). Start the sign-in again.') }),
-      AUTH_TIMEOUT_MS,
-    )
-
-    channel.onmessage = (event: MessageEvent) => {
+    const handle = (data: unknown): void => {
       if (settled) return
-      const data: unknown = event.data
       if (!isOAuthCallbackMessage(data)) return
       const expected = getSecret(stateKey)
       const stateOk = validateState(expected, data.state)
@@ -101,27 +150,37 @@ export function completeAuthorization(session: McpSession, profileId: string, si
       if (data.code === null) return
 
       // A matching response: single-use state, then redeem the code. Stay abortable while that runs.
-      const code = data.code
+      const { code, iss } = data
       deleteSecret(stateKey)
       channel.onmessage = null
       channel.close()
       session
-        .finishAuth(code)
+        .finishAuth(code, iss ?? undefined)
         .then(
           () => finish({ ok: true }),
           (e: unknown) => finish({ ok: false, error: new Error(authFailureMessage(e, { endpoint: 'token', origin: window.location.origin })) }),
         )
     }
+
+    signal.addEventListener('abort', onAbort, { once: true })
+    const timer = setTimeout(
+      () => finish({ ok: false, error: new Error('Timed out waiting for authorization (5 minutes). Start the sign-in again.') }),
+      AUTH_TIMEOUT_MS,
+    )
+
+    channel.onmessage = (event: MessageEvent) => handle(event.data)
+    // The buffer's listener is replaced by this one; whatever it caught while nobody was waiting is handled now.
+    const early = takeBufferedMessage()
+    if (early !== null) handle(early)
   })
 }
-
 /**
  * Full-page-redirect fallback: reads AND clears the `oauth:pending-return` marker. Returns the
- * profile, code and state only when the marker holds a complete response whose `state` matches the
+ * profile, code, state and RFC 9207 `iss` (string or null) only when the marker holds a complete response whose `state` matches the
  * attempt this browser tab started; anything else (an abandoned redirect, a provider error, a
  * forged or stale state) returns null. A provider error is surfaced as a log event.
  */
-export function consumePendingOAuthReturn(): { profileId: string; code: string; state: string } | null {
+export function consumePendingOAuthReturn(): { profileId: string; code: string; state: string; iss: string | null } | null {
   const raw = getSecret(PENDING_RETURN_KEY)
   if (raw === null) return null
   deleteSecret(PENDING_RETURN_KEY)
@@ -150,6 +209,9 @@ export function consumePendingOAuthReturn(): { profileId: string; code: string; 
     return null
   }
 
+  // RFC 9207 `iss`: string or null. Anything else means the marker is not ours - drop it.
+  if (marker.iss !== undefined && marker.iss !== null && typeof marker.iss !== 'string') return null
+  const iss = typeof marker.iss === 'string' && marker.iss ? marker.iss : null
   const code = typeof marker.code === 'string' && marker.code ? marker.code : null
   if (!code || !state) return null // marker written before the redirect and never completed
   if (!validateState(expected, state)) {
@@ -162,5 +224,5 @@ export function consumePendingOAuthReturn(): { profileId: string; code: string; 
     return null
   }
   deleteSecret(stateKey)
-  return { profileId, code, state }
+  return { profileId, code, state, iss }
 }

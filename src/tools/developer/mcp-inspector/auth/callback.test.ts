@@ -13,24 +13,50 @@ import {
 
 describe('parseCallbackParams', () => {
   it('reads code and state', () => {
-    expect(parseCallbackParams('?code=abc&state=xyz')).toEqual({ code: 'abc', state: 'xyz', error: null, errorDescription: null })
+    expect(parseCallbackParams('?code=abc&state=xyz')).toEqual({ code: 'abc', state: 'xyz', iss: null, error: null, errorDescription: null })
   })
 
   it('reads a provider error and leaves code null', () => {
     expect(parseCallbackParams('?error=access_denied&error_description=No')).toEqual({
       code: null,
       state: null,
+      iss: null,
       error: 'access_denied',
       errorDescription: 'No',
     })
   })
 
+  it('reads the RFC 9207 iss parameter alongside code and state', () => {
+    expect(parseCallbackParams('?code=abc&state=xyz&iss=https%3A%2F%2Fas.test')).toEqual({
+      code: 'abc',
+      state: 'xyz',
+      iss: 'https://as.test',
+      error: null,
+      errorDescription: null,
+    })
+  })
+
+  it('keeps iss next to a provider error', () => {
+    expect(parseCallbackParams('?error=access_denied&error_description=No&iss=https%3A%2F%2Fas.test')).toEqual({
+      code: null,
+      state: null,
+      iss: 'https://as.test',
+      error: 'access_denied',
+      errorDescription: 'No',
+    })
+  })
+
+  it('treats an empty iss like a missing one', () => {
+    expect(parseCallbackParams('?code=abc&state=xyz&iss=').iss).toBeNull()
+    expect(parseCallbackParams('?code=abc&state=xyz').iss).toBeNull()
+  })
+
   it('returns all-null for an empty query', () => {
-    expect(parseCallbackParams('')).toEqual({ code: null, state: null, error: null, errorDescription: null })
+    expect(parseCallbackParams('')).toEqual({ code: null, state: null, iss: null, error: null, errorDescription: null })
   })
 
   it('treats empty values like missing ones and decodes percent-escapes', () => {
-    expect(parseCallbackParams('?code=&state=a%20b')).toEqual({ code: null, state: 'a b', error: null, errorDescription: null })
+    expect(parseCallbackParams('?code=&state=a%20b')).toEqual({ code: null, state: 'a b', iss: null, error: null, errorDescription: null })
   })
 })
 
@@ -56,18 +82,26 @@ describe('validateState', () => {
 
 describe('message helpers', () => {
   it('toCallbackMessage tags the params', () => {
-    expect(toCallbackMessage({ code: 'c', state: 's', error: null, errorDescription: null })).toEqual({
+    expect(toCallbackMessage({ code: 'c', state: 's', iss: 'https://as.test', error: null, errorDescription: null })).toEqual({
       type: 'mcp-oauth-callback',
       state: 's',
       code: 'c',
+      iss: 'https://as.test',
       error: null,
       errorDescription: null,
     })
   })
 
   it('isOAuthCallbackMessage accepts well-formed messages only', () => {
-    const ok = { type: 'mcp-oauth-callback', state: 's', code: 'c', error: null, errorDescription: null }
+    const ok = { type: 'mcp-oauth-callback', state: 's', code: 'c', iss: null, error: null, errorDescription: null }
     expect(isOAuthCallbackMessage(ok)).toBe(true)
+    expect(isOAuthCallbackMessage({ ...ok, iss: 'https://as.test' })).toBe(true)
+    expect(isOAuthCallbackMessage({ ...ok, iss: 5 })).toBe(false)
+    expect(isOAuthCallbackMessage({ ...ok, iss: {} })).toBe(false)
+    expect(isOAuthCallbackMessage({ ...ok, iss: undefined })).toBe(false)
+    const withoutIss: Record<string, unknown> = { ...ok }
+    delete withoutIss.iss
+    expect(isOAuthCallbackMessage(withoutIss)).toBe(false) // the key is required
     expect(isOAuthCallbackMessage({ ...ok, code: 5 })).toBe(false)
     expect(isOAuthCallbackMessage({ ...ok, type: 'other' })).toBe(false)
     expect(isOAuthCallbackMessage({ type: 'mcp-oauth-callback' })).toBe(false)

@@ -59,6 +59,7 @@ export default function OAuthCallbackPage() {
           profileId: pendingProfileId,
           code: params.code,
           state: params.state,
+          iss: params.iss,
           error: params.error,
           errorDescription: params.errorDescription,
         }),

@@ -38,6 +38,7 @@ interface PendingReturn {
   profileId: string
   code: string
   state: string
+  iss: string | null
 }
 
 function logEvent(level: 'info' | 'warn' | 'error', text: string): void {
@@ -188,7 +189,7 @@ export function useConnection(
       const { live: l, token } = openSession(target, profileToConfig(target, getSecret).config)
       setState({ status: 'connecting' })
       try {
-        await l.session.finishAuth(pending.code)
+        await l.session.finishAuth(pending.code, pending.iss ?? undefined)
       } catch (e) {
         if (tokenRef.current !== token) return
         const message = errorMessage(e)

@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Profile } from '../schemas'
 import { PERSISTED_SECRETS_KEY, SESSION_SECRETS_KEY, getSecret, setSecret } from '../secrets'
 import { OAUTH_CREDENTIALS_EVENT } from './logic'
+import { stopCallbackBuffer } from './flow'
 import { POPUP_NAME, buildAuthProvider, clearOAuthCredentials } from './provider'
 
 const ORIGIN = 'https://app.test'
@@ -320,6 +321,50 @@ describe('redirectToAuthorization', () => {
     expect(sessionText()).toContain('oauth:pending-return')
     expect(allLocalText()).not.toContain('pending-return')
     expect(assignLocation).toHaveBeenCalledWith(url.toString())
+  })
+
+  describe('lost-message buffer', () => {
+    class FakeChannel {
+      static instances: FakeChannel[] = []
+      onmessage: ((e: MessageEvent) => void) | null = null
+      closed = false
+      constructor(readonly name: string) {
+        FakeChannel.instances.push(this)
+      }
+      postMessage(): void {}
+      close(): void {
+        this.closed = true
+      }
+    }
+    beforeEach(() => {
+      FakeChannel.instances = []
+      vi.stubGlobal('BroadcastChannel', FakeChannel)
+    })
+    afterEach(() => {
+      stopCallbackBuffer()
+      vi.unstubAllGlobals()
+    })
+
+    it('starts listening on the OAuth channel once the popup is open', () => {
+      build(profile(), { openWindow: () => ({}) as Window, assignLocation: vi.fn() }).redirectToAuthorization(url)
+      expect(FakeChannel.instances).toHaveLength(1)
+      expect(FakeChannel.instances[0].name).toBe('su-mcp-oauth')
+      expect(FakeChannel.instances[0].onmessage).not.toBeNull()
+    })
+
+    it('does not listen in the full-page fallback or for a rejected URL', () => {
+      build(profile(), { openWindow: () => null, assignLocation: vi.fn() }).redirectToAuthorization(url)
+      expect(() => build(profile(), { openWindow: vi.fn(), assignLocation: vi.fn() }).redirectToAuthorization(new URL('javascript:alert(1)'))).toThrow()
+      expect(FakeChannel.instances).toHaveLength(0)
+    })
+
+    it('a second sign-in replaces the first listener instead of stacking another', () => {
+      const p = build(profile(), { openWindow: () => ({}) as Window, assignLocation: vi.fn() })
+      p.redirectToAuthorization(url)
+      p.redirectToAuthorization(url)
+      expect(FakeChannel.instances).toHaveLength(2)
+      expect(FakeChannel.instances.filter((c) => !c.closed)).toHaveLength(1)
+    })
   })
 
   it('does not leave the page when the marker cannot be stored', () => {

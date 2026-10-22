@@ -9,6 +9,7 @@ import type {
 import type { Profile } from '../schemas'
 import { deleteSecret, getSecret, replaceSecret, setSecret } from '../secrets'
 import { PENDING_RETURN_KEY, oauthSecretKey, type OAuthSecretKind } from './callback'
+import { startCallbackBuffer } from './flow'
 import { OAUTH_CREDENTIALS_EVENT, buildClientMetadata, oauthRedirectUrl, randomToken } from './logic'
 
 // The SDK's OAuthClientProvider, backed by the two-tier secrets store (secrets.ts is the ONLY
@@ -175,6 +176,8 @@ class McpOAuthProvider implements OAuthClientProvider {
     deleteSecret(PENDING_RETURN_KEY)
     const popup = this.openWindow(url, POPUP_NAME, POPUP_FEATURES)
     if (popup) {
+      // From now until completeAuthorization takes over, catch a callback that arrives too early.
+      startCallbackBuffer()
       try {
         // Reverse-tabnabbing guard: the authorization server's page must not reach this window via
         // window.opener. The callback flow uses a BroadcastChannel, not the opener.

@@ -141,7 +141,14 @@ export function classifyOAuthError(error: unknown, ctx: OAuthErrorContext): Diag
       'Ask the authorization server operator to publish an https token_endpoint.',
     ])
   }
-  if (error instanceof AuthorizationServerMismatchError || error instanceof IssuerMismatchError) {
+  if (error instanceof IssuerMismatchError) {
+    // RFC 9207 / RFC 8414. The SDK message JSON-encodes what it received, so it is safe to show as-is.
+    return diagnosis('protocol', 'Authorization server issuer mismatch', message, [
+      "The authorization server's response issuer did not match the server it was discovered from (possible mix-up attack or a misconfigured authorization server).",
+      'Do not retry against a server you do not trust. Use "Clear credentials" and sign in again.',
+    ])
+  }
+  if (error instanceof AuthorizationServerMismatchError) {
     return diagnosis('protocol', 'Authorization server mismatch', message, [
       'The stored credentials or the authorization response belong to a different authorization server than the one now advertised.',
       'Use "Clear credentials" and sign in again.',

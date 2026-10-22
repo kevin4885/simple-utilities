@@ -3,6 +3,7 @@ import {
   AuthorizationServerMismatchError,
   InsecureTokenEndpointError,
   InsufficientScopeError,
+  IssuerMismatchError,
   OAuthError,
   OAuthErrorCode,
   RegistrationRejectedError,
@@ -106,6 +107,20 @@ describe('classifyOAuthError', () => {
     expect(d.code).toBe('protocol')
     expect(d.detail).toContain(e.message)
     expect(d.hints.join(' ')).toMatch(/Clear credentials/)
+  })
+
+  it.each([
+    ['a different issuer', 'https://evil.test'],
+    ['a missing iss', undefined],
+  ])('IssuerMismatchError (%s) -> protocol, carrying the SDK message and the mix-up hint', (_label, received) => {
+    const e = new IssuerMismatchError('authorization_response', 'https://as.test', received)
+    const d = classifyOAuthError(e, { endpoint: 'token', origin: ORIGIN })
+    expect(d.code).toBe('protocol')
+    expect(d.title).toBe('Authorization server issuer mismatch')
+    expect(d.detail).toContain(e.message)
+    expect(d.hints.join(' ')).toMatch(/response issuer did not match the server it was discovered from/)
+    expect(d.hints.join(' ')).toMatch(/mix-up attack or a misconfigured/)
+    expect(d.httpStatus).toBeNull()
   })
 
   it('InsufficientScopeError -> forbidden (403), carrying the SDK message', () => {

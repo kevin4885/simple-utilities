@@ -8,6 +8,8 @@ export type OAuthCallbackMessage = {
   type: 'mcp-oauth-callback'
   state: string | null
   code: string | null
+  /** RFC 9207 issuer of the authorization response; null when absent or empty. Never validated here - forwarded verbatim to the SDK, which alone compares it. */
+  iss: string | null
   error: string | null
   errorDescription: string | null
 }
@@ -15,7 +17,7 @@ export type OAuthCallbackMessage = {
 export const OAUTH_CALLBACK_PATH = '/oauth/callback'
 export const TOOL_PATH = '/tools/mcp-inspector'
 
-/** Session-only marker for the full-page fallback: `{profileId}` before the redirect, `{profileId, code, state}` after. */
+/** Session-only marker for the full-page fallback: `{profileId}` before the redirect, `{profileId, code, state, iss, error, errorDescription}` after. */
 export const PENDING_RETURN_KEY = 'oauth:pending-return'
 
 export type OAuthSecretKind = 'tokens' | 'client' | 'verifier' | 'state' | 'discovery'
@@ -28,6 +30,7 @@ export function oauthSecretKey(profileId: string, kind: OAuthSecretKind): string
 export interface CallbackParams {
   code: string | null
   state: string | null
+  iss: string | null
   error: string | null
   errorDescription: string | null
 }
@@ -39,6 +42,7 @@ export function parseCallbackParams(search: string): CallbackParams {
   return {
     code: get('code'),
     state: get('state'),
+    iss: get('iss'),
     error: get('error'),
     errorDescription: get('error_description'),
   }
@@ -55,6 +59,7 @@ export function toCallbackMessage(params: CallbackParams): OAuthCallbackMessage 
     type: 'mcp-oauth-callback',
     state: params.state,
     code: params.code,
+    iss: params.iss,
     error: params.error,
     errorDescription: params.errorDescription,
   }
@@ -72,6 +77,7 @@ export function isOAuthCallbackMessage(data: unknown): data is OAuthCallbackMess
     m.type === 'mcp-oauth-callback' &&
     nullableString(m.state) &&
     nullableString(m.code) &&
+    nullableString(m.iss) &&
     nullableString(m.error) &&
     nullableString(m.errorDescription)
   )

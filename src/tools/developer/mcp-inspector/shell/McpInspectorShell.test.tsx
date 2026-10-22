@@ -27,6 +27,8 @@ vi.mock('../connection/session', async (orig) => {
       }),
   }
 })
+// The real tabs have their own suites; the shell only needs to know that the default tab is mounted.
+vi.mock('../tabs/tools/ToolsTab', () => ({ default: () => <div data-testid="tab-stub-tools">tools stub</div> }))
 vi.mock('../auth/flow', () => ({
   completeAuthorization: vi.fn(),
   consumePendingOAuthReturn: vi.fn(() => null),
@@ -172,8 +174,8 @@ describe('connect flow', () => {
     expect(summary).toHaveTextContent('Session ID')
     expect(summary).toHaveTextContent('tools')
     expect(screen.queryByText('Connect to a server to begin.')).toBeNull()
-    // placeholder of the default tab is mounted
-    expect(within(screen.getByRole('tabpanel')).getByText('Not implemented yet')).toBeInTheDocument()
+    // the default tab is mounted
+    expect(within(screen.getByRole('tabpanel')).getByTestId('tab-stub-tools')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Disconnect' }))
     await waitFor(() => expect(screen.getByTestId('status-badge')).toHaveTextContent('Disconnected'))

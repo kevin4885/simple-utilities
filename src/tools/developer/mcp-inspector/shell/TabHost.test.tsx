@@ -1,8 +1,16 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ServerSummary, SessionState } from '../connection/types'
 import type { McpSession } from '../connection/session'
+// The real tabs have their own suites; TabHost is tested against stubs that only identify which tab is mounted.
+vi.mock('../tabs/tools/ToolsTab', () => ({ default: () => <div data-testid="tab-stub-tools">tools stub</div> }))
+vi.mock('../tabs/resources/ResourcesTab', () => ({ default: () => <div data-testid="tab-stub-resources">resources stub</div> }))
+vi.mock('../tabs/prompts/PromptsTab', () => ({ default: () => <div data-testid="tab-stub-prompts">prompts stub</div> }))
+vi.mock('../tabs/raw/RawTab', () => ({ default: () => <div data-testid="tab-stub-raw">raw stub</div> }))
+vi.mock('../tabs/conformance/ConformanceTab', () => ({ default: () => <div data-testid="tab-stub-conformance">conformance stub</div> }))
+vi.mock('../tabs/client/ClientTab', () => ({ default: () => <div data-testid="tab-stub-client">client stub</div> }))
+
 import { TabHost } from './TabHost'
 import { useUiStore } from './uiStore'
 import type { SessionBaseOptions } from './useConnection'
@@ -50,7 +58,7 @@ describe('TabHost', () => {
   it('before connecting shows the prompt and mounts no tab component', () => {
     renderHost({ status: 'disconnected' })
     expect(screen.getByText('Connect to a server to begin.')).toBeInTheDocument()
-    expect(screen.queryByText('Not implemented yet')).toBeNull()
+    expect(screen.queryByTestId(/^tab-stub-/)).toBeNull()
     for (const name of ['Tools', 'Resources', 'Prompts', 'Raw', 'Conformance', 'Client']) {
       expect(screen.getByRole('tab', { name })).toBeDisabled()
     }
@@ -82,13 +90,15 @@ describe('TabHost', () => {
     }
   })
 
-  it('defaults to tools when enabled, else raw; renders the active tab placeholder', () => {
+  it('defaults to tools when enabled, else raw; mounts only the active tab', () => {
     const a = renderHost(connected({ tools: {} }))
     expect(screen.getByRole('tab', { name: 'Tools' })).toHaveAttribute('data-state', 'active')
-    expect(screen.getByText('Not implemented yet')).toBeInTheDocument()
+    expect(screen.getByTestId('tab-stub-tools')).toBeInTheDocument()
+    expect(screen.getAllByTestId(/^tab-stub-/)).toHaveLength(1)
     a.unmount()
     renderHost(connected({ resources: {} }))
     expect(screen.getByRole('tab', { name: 'Raw' })).toHaveAttribute('data-state', 'active')
+    expect(screen.getByTestId('tab-stub-raw')).toBeInTheDocument()
   })
 
   it('switching tabs updates the ui store and shows that tab', async () => {
@@ -96,22 +106,24 @@ describe('TabHost', () => {
     await userEvent.setup().click(screen.getByRole('tab', { name: 'Raw' }))
     expect(useUiStore.getState().activeTab).toBe('raw')
     expect(screen.getByRole('tab', { name: 'Raw' })).toHaveAttribute('data-state', 'active')
+    expect(screen.getByTestId('tab-stub-raw')).toBeInTheDocument()
+    expect(screen.queryByTestId('tab-stub-tools')).toBeNull()
   })
 
   it('remounts the active tab component when the epoch changes, not when it stays the same', () => {
     const h = renderHost(connected({ tools: {} }), 1)
-    const first = screen.getByText('Not implemented yet')
+    const first = screen.getByTestId('tab-stub-tools')
     h.rerenderHost({ epoch: 1 })
-    expect(screen.getByText('Not implemented yet')).toBe(first)
+    expect(screen.getByTestId('tab-stub-tools')).toBe(first)
     h.rerenderHost({ epoch: 2 })
-    expect(screen.getByText('Not implemented yet')).not.toBe(first)
+    expect(screen.getByTestId('tab-stub-tools')).not.toBe(first)
   })
 
   it('unmounts the tab again when the session goes away', () => {
     const h = renderHost(connected({ tools: {} }))
-    expect(screen.getByText('Not implemented yet')).toBeInTheDocument()
+    expect(screen.getByTestId('tab-stub-tools')).toBeInTheDocument()
     h.rerenderHost({ state: { status: 'disconnected' }, session: null, sessionOptions: null })
-    expect(screen.queryByText('Not implemented yet')).toBeNull()
+    expect(screen.queryByTestId(/^tab-stub-/)).toBeNull()
     expect(screen.getByText('Connect to a server to begin.')).toBeInTheDocument()
   })
 
@@ -119,6 +131,6 @@ describe('TabHost', () => {
     useUiStore.setState({ activeTab: 'prompts' })
     renderHost(connected({ tools: {} }))
     expect(screen.getByRole('tab', { name: 'Tools' })).toHaveAttribute('data-state', 'active')
+    expect(screen.getByTestId('tab-stub-tools')).toBeInTheDocument()
   })
-
 })

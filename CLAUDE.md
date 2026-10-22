@@ -67,6 +67,12 @@ path) lives under `AppShell`, a **pathless** React Router layout route that owns
 `Header`, the Ctrl+K command palette, and the fixed-viewport scroll-lock shell — so those
 routes' own paths are unaffected by the layout route wrapping them.
 
+`/oauth/callback` is a second standalone route, a sibling of `/` **outside** `AppShell` (no
+Header, no Ctrl+K). It is the OAuth redirect target of the MCP Inspector tool: a lazy, SDK-free
+page that hands the result back to the tool window and is deliberately **not** prerendered
+(`getStaticRoutes()` stays `2 + tools.length`). Declare any such non-tool route in `App.tsx`
+before the `*` catch-all.
+
 `src/lib/content.ts` is the single source of truth for SEO/marketing copy (`SITE_URL`,
 `LANDING_COPY`, `truncateDescription`) — read by both the live client (`useDocumentMeta`,
 called once per page in `LandingPage`/`AppHomePage`/`ToolPage`) and, in a later phase, a
@@ -158,6 +164,12 @@ See `src/tools/CLAUDE.md` for step-by-step instructions on adding a new tool.
 
 All keys are prefixed `su:` to avoid collisions. Each tool's `store.ts` is the source of truth
 for its own key. The only global key is `su:theme`.
+
+A tool may own several keys. The MCP Inspector (`src/tools/developer/mcp-inspector/`) uses four:
+`su:mcp-inspector` (profiles, history, prefs), `su:mcp-inspector-secrets` (localStorage; only
+secrets of profiles that opted in to persisting them), `su:mcp-inspector-client` (client-feature
+settings) and `su:mcp-inspector-session` — the one key that lives in **sessionStorage**, holding
+secrets by default and transient OAuth state.
 
 ## Constraints
 

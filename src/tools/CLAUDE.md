@@ -26,6 +26,9 @@ Rules:
   persist(fn, { name: 'su:<tool-id>' })
   ```
 - Validate localStorage on rehydrate with Zod (see pizza-dough/store.ts for the pattern).
+- A large tool may nest sub-areas (e.g. `connection/`, `auth/`, `tabs/<tab>/`), each with its own
+  pure `logic.ts` + `logic.test.ts`, instead of one big `logic.ts`/`index.tsx`. See
+  `developer/mcp-inspector/CLAUDE.md` for the reference layout of a large tool.
 
 ---
 

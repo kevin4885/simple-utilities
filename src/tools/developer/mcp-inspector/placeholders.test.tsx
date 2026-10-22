@@ -6,9 +6,6 @@ import type { Profile } from './schemas'
 import AuthPanel from './auth/AuthPanel'
 import { buildAuthProvider } from './auth/provider'
 import { completeAuthorization, consumePendingOAuthReturn } from './auth/flow'
-import ClientFeatureHost from './client-features/Host'
-import { clientFeatureSetup } from './client-features/register'
-import ClientTab from './tabs/client/ClientTab'
 import ConformanceTab from './tabs/conformance/ConformanceTab'
 import PromptsTab from './tabs/prompts/PromptsTab'
 import RawTab from './tabs/raw/RawTab'
@@ -53,14 +50,13 @@ describe('tab placeholders', () => {
     ['PromptsTab', PromptsTab],
     ['RawTab', RawTab],
     ['ConformanceTab', ConformanceTab],
-    ['ClientTab', ClientTab],
   ])('%s renders "Not implemented yet"', (_name, Tab) => {
     render(<Tab {...tabProps} />)
     expect(screen.getByText('Not implemented yet')).toBeInTheDocument()
   })
 })
 
-describe('auth and client-feature placeholders', () => {
+describe('auth placeholders', () => {
   it('AuthPanel renders "Not implemented yet"', () => {
     render(<AuthPanel profile={profile} onChange={() => undefined} />)
     expect(screen.getByText('Not implemented yet')).toBeInTheDocument()
@@ -73,15 +69,5 @@ describe('auth and client-feature placeholders', () => {
   it('flow placeholders: no pending return; completeAuthorization rejects', async () => {
     expect(consumePendingOAuthReturn()).toBeNull()
     await expect(completeAuthorization({} as McpSession, 'p', new AbortController().signal)).rejects.toThrow(/not implemented/i)
-  })
-
-  it('clientFeatureSetup is a no-op declaring no capabilities', () => {
-    expect(clientFeatureSetup.capabilities).toEqual({})
-    expect(() => clientFeatureSetup.dispose()).not.toThrow()
-  })
-
-  it('ClientFeatureHost renders nothing', () => {
-    const { container } = render(<ClientFeatureHost />)
-    expect(container).toBeEmptyDOMElement()
   })
 })

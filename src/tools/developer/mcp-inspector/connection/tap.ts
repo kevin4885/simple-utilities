@@ -106,14 +106,40 @@ function credentialsInText(text: string): string[] {
   return out
 }
 
-/** Reads a copy of a (non-streaming) response body and returns the credentials in it. Never throws. */
+/** OAuth token / registration documents are tiny; never read more than this from a response copy. */
+const MAX_SCANNED_RESPONSE_CHARS = 64 * 1024
+
+/** Reads at most MAX_SCANNED_RESPONSE_CHARS of a text stream, then cancels it. */
+async function readCapped(body: ReadableStream<Uint8Array>): Promise<string> {
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let text = ''
+  try {
+    while (text.length < MAX_SCANNED_RESPONSE_CHARS) {
+      const { done, value } = await reader.read()
+      if (done) break
+      text += decoder.decode(value, { stream: true })
+    }
+  } finally {
+    // NOT awaited: a tee branch's cancel() only settles once the OTHER branch (the caller's response)
+    // is cancelled or finished too, so awaiting it here would hang until the caller has read the body.
+    void reader.cancel().catch(() => undefined)
+  }
+  return text
+}
+
+/**
+ * Reads a bounded copy of a (non-streaming) response body and returns the credentials in it.
+ * Never throws. The caller's response is untouched (we read a clone, and stop early on big bodies).
+ */
 async function credentialsInResponse(response: Response): Promise<string[]> {
   try {
     const type = response.headers?.get?.('content-type')?.toLowerCase() ?? ''
     // Event streams are long-lived: cloning and reading them would block / buffer forever.
     if (type.includes('text/event-stream') || typeof response.clone !== 'function') return []
     if (type && !/json|text\/|x-www-form-urlencoded/.test(type)) return []
-    return credentialsInText(await response.clone().text())
+    const body = response.clone().body
+    return body ? credentialsInText(await readCapped(body)) : []
   } catch {
     return []
   }

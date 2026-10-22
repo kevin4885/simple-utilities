@@ -189,6 +189,20 @@ describe('createFetchTap', () => {
       expect((await (await plain('https://auth.test/token')).json()).access_token).toBe('ACCESS-TOKEN-9')
     })
 
+    it('reads at most a bounded prefix of a huge body and still hands the caller the whole body', async () => {
+      const learned: string[][] = []
+      const big = '{"access_token":"ACCESS-TOKEN-EARLY","pad":"' + 'x'.repeat(200_000) + '"}'
+      const tap = createFetchTap({
+        fetch: (async () => jsonResponse(big)) as unknown as typeof fetch,
+        onLog: () => undefined,
+        now: () => 0,
+        onLearn: (f) => learned.push(f),
+      })
+      const res = await tap('https://mcp.test/mcp')
+      expect(learned.flat()).toEqual(['ACCESS-TOKEN-EARLY']) // found in the scanned prefix
+      expect((await res.text()).length).toBe(big.length) // caller still gets everything
+    })
+
     it('a read failure never breaks the request', async () => {
       const tap = createFetchTap({
         fetch: (async () => {

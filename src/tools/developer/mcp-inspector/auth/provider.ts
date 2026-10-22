@@ -170,10 +170,11 @@ class McpOAuthProvider implements OAuthClientProvider {
       throw new Error(`Refusing to open a non-http(s) authorization URL (${authorizationUrl.protocol}).`)
     }
     const url = authorizationUrl.toString()
+    // A stale full-page marker (an abandoned earlier redirect) would be copied into the popup's
+    // sessionStorage and turn its callback into a full-page return. Clear it BEFORE the popup exists.
+    deleteSecret(PENDING_RETURN_KEY)
     const popup = this.openWindow(url, POPUP_NAME, POPUP_FEATURES)
     if (popup) {
-      // No stale full-page marker may turn this popup's callback into a redirect.
-      deleteSecret(PENDING_RETURN_KEY)
       try {
         // Reverse-tabnabbing guard: the authorization server's page must not reach this window via
         // window.opener. The callback flow uses a BroadcastChannel, not the opener.

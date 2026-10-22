@@ -301,9 +301,15 @@ describe('redirectToAuthorization', () => {
     expect(popup.opener).toBeNull()
   })
 
-  it('a popup clears any stale full-page marker', () => {
+  it('clears a stale full-page marker BEFORE the popup is opened (the popup inherits sessionStorage)', () => {
     setSecret('oauth:pending-return', JSON.stringify({ profileId: 'old' }), { persist: false })
-    build(profile(), { openWindow: () => ({}) as Window, assignLocation: vi.fn() }).redirectToAuthorization(url)
+    let markerWhenOpened: string | null = 'not called'
+    const openWindow = vi.fn(() => {
+      markerWhenOpened = getSecret('oauth:pending-return')
+      return {} as Window
+    })
+    build(profile(), { openWindow, assignLocation: vi.fn() }).redirectToAuthorization(url)
+    expect(markerWhenOpened).toBeNull()
     expect(getSecret('oauth:pending-return')).toBeNull()
   })
 
